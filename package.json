@@ -1,0 +1,18 @@
+{
+  "name": "specgate",
+  "version": "0.1.0",
+  "description": "把需求变成「提需求的人能审、机器能消费」的验收契约；契约不合格不许进入实现阶段。纯确定性、零模型参与。",
+  "type": "module",
+  "bin": {
+    "specgate": "src/cli.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test test/"
+  },
+  "dependencies": {
+    "yaml": "^2.9.0"
+  }
+}

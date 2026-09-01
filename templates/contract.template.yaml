@@ -1,0 +1,36 @@
+# specgate 契约模板（由 draft 生成，在你当前会话里让 AI 填写）
+# 字段说明见各行注释。intent 用你的原话，不改写、不美化。
+# then 的期望必须可机械判定（有数值+单位 / 具体文案 / 状态码 / 错误码 / 布尔断言）。
+
+contract: <短 id>            # 必填，全局唯一短标识
+intent: |                    # 必填，使用者的原话
+  <把需求原文粘贴到这里>
+
+accept:                      # 必填，至少 1 条
+  - id: A1                   # 必填，全文档唯一
+    given: <前提>            # 前提（Gherkin given）
+    when:  <动作>            # 动作（Gherkin when）—— 能力边界要看这里
+    then:  <期望>            # 期望，必须可机械判定（见下方 verify）
+    verify: unit             # 必填，取值见 verify 清单
+    suspect: false          # 可选；true=本条 then 被判为「可疑表述」（起草时 AI 标注，lint 只读不判；只能加严不能放宽）
+    invariants:              # 计算/聚合类条目必填；其余可选
+      - <输入变了，输出该怎么变；不要写恒真断言>
+    example:                # 可选；写了就要 positive / negative 成对
+      - kind: positive       # positive / negative 二选一
+        input:  {}           # 必填
+        output: {}           # 必填
+        assumed_output: []   # 可选，哪些期望值是 AI 推测的（只标期望值）
+    assumed_output: []       # 可选，推测的期望值登记在这里
+
+uses:                        # 可选，用了哪些既有约定
+  components: []
+  api: []                    # 非空会触发「接口状态覆盖」检查
+  tokens: []
+breaks:                      # 可以是空数组，但每条必须三字段齐全
+  - what: <打破了什么既有约定>
+    why:  <为什么必须打破>
+    approved: null           # true / false / null 三值之一（null = 待审批）
+out_of_scope:                # 必填且不许为空
+  - <明确哪些不在本次范围内>
+states:                      # 可选；uses.api 非空时会被检查，只允许六个枚举
+  - empty                    # empty / partial / forbidden / error / loading / race

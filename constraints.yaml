@@ -1,0 +1,29 @@
+# specgate 项目约束源（§3.3）
+# verify 取值从这里读；源码不得硬编码该枚举。
+# 找不到本文件时，工具回退内置默认并在输出标注「builtin」。
+# 想扩展 verify 工具，只改本文件即可，不必动代码。
+
+manual:
+  max_ratio: 0.2          # manual 条目占比硬上限（超过则检查⑤阻塞）
+
+verify_tools:
+  type:
+    note: 类型系统能保证
+  unit:
+    runner: vitest
+    note: 单元测试
+  contract-test:
+    note: 接口契约测试（基准来自接口定义，不是模型猜的）
+  geo:
+    note: 视觉数值卡尺（同结构精确比对具体几何/样式计算值）
+  ax:
+    note: 语义指纹比对（跨组件库，用角色+文案做锚点、坐标差值做度量）
+  unit-visual:
+    note: 交互单元 + 文本骨架比对（页面缺少语义角色标注时用）
+  trace:
+    note: 交互状态迁移等价性
+  state-matrix:
+    note: 接口状态矩阵（拦截并改写响应，造出空/null/4xx/5xx/慢响应）
+  manual:
+    max_ratio: 0.2
+    note: 人工验收 —— 有占比上限

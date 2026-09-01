@@ -1,0 +1,37 @@
+contract: demo-fail
+intent: |
+  做一个购物车，界面要友好，支持拖拽排序，总价要算对。
+accept:
+  - id: A1
+    given: 已登录用户
+    when: 打开购物车页
+    then: 界面要友好
+    verify: manual
+    assumed_output: [友好度]
+  - id: A2
+    given: 已登录用户
+    when: 拖拽商品到目标分组
+    then: 商品出现在目标分组中
+    verify: trace
+  - id: A3
+    given: 空购物车
+    when: 计算总价
+    then: 总价等于所有商品价格之和
+    verify: manual
+    invariants:
+      - 新增商品后总价必须是数字
+  - id: A4
+    given: 任意
+    when: 提交表单
+    then: 返回 200
+    verify: foobar
+breaks:
+  - what: 绕过统一请求封装，直接用 fetch
+    why: 需要读取响应头里的 token，现有封装未透出
+    approved: null
+out_of_scope:
+  - 注册流程
+uses:
+  api: [/login]
+states:
+  - empty

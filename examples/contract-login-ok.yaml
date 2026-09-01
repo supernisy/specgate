@@ -1,0 +1,37 @@
+contract: login-page
+intent: |
+  用户登录页：输入账号密码登录；登录失败要有提示；接口异常要有错误态。
+accept:
+  - id: A1
+    given: 未登录用户
+    when: 提交正确账号密码
+    then: 跳转到 /dashboard 且出现 heading「登录成功」
+    verify: trace
+    invariants:
+      - 相同入参连续调用两次，结果完全相同
+  - id: A2
+    given: 已登录状态
+    when: 点击退出按钮
+    then: 退出码为 0 且 cookie 被清除
+    verify: unit
+  - id: A3
+    given: 空购物车
+    when: 新增一件商品
+    then: 总价严格增加 1 元
+    verify: unit
+    invariants:
+      - 新增一件商品后，总价严格增加
+  - id: A4
+    given: 任意
+    when: 登录请求进行中
+    then: 显示 loading 且无可交互内容
+    verify: unit-visual
+    assumed_output: [loading 持续时长]
+out_of_scope:
+  - 注册流程
+  - 找回密码
+uses:
+  api: [/login]
+states:
+  - empty
+  - error

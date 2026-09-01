@@ -1,0 +1,15 @@
+# 依赖（唯一的运行时依赖 yaml，由 npm install 还原，不入库）
+node_modules/
+
+# specgate 运行时产物（lint/plan/draft 的输出，非源码）
+review.md
+contract.draft.yaml
+draft.prompt.md
+specgate-plan/
+
+# 日志
+*.log
+
+# 系统/编辑器
+.DS_Store
+Thumbs.db
