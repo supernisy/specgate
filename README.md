@@ -1,5 +1,10 @@
 # specgate
 
+[![CI](https://github.com/supernisy/specgate/actions/workflows/test.yml/badge.svg)](https://github.com/supernisy/specgate/actions/workflows/test.yml)
+![Node](https://img.shields.io/badge/node-%3E%3D%2022-brightgreen)
+![License: MIT](https://img.shields.io/badge/license-MIT-blue)
+![Zero Model](https://img.shields.io/badge/lint-零模型-red)
+
 一个**纯确定性、零模型参与**的 CLI 门禁：把「提需求的人（不读代码）」的需求，
 转成一份「人能审、机器能消费」的验收契约（YAML），并判定契约里每条验收条件
 **是否可被机械判定**。契约不合格，不许进入实现阶段。
