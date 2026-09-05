@@ -11,13 +11,41 @@
 
 它**不生成代码、不判断需求合理性**——只做一件事：把「这条验收能不能自动验」说清楚。
 
+## 🚀 快速开始（推荐用 Skill，不用记命令）
+
+**你只要做一件事：把需求丢给 specgate。**
+
+- 在对话里输入 **`/specgate`**，或直接说「把需求做成验收契约 / 给需求做门禁 / 审一下验收条件 / 这条能不能被测试验证」
+- Skill 会**自动跑完整流程**并把产物生成好，再告诉你怎么用——你不用记任何命令、不用手填 YAML
+
+```
+你：  /specgate
+你：  （贴一段需求原文，或给个需求文件路径）
+specgate → draft 起草 → 填契约(让 AI 按提示逐条转写) → lint 迭代到通过 → plan 切任务包
+specgate： 产出 contract.yaml + review.md + specgate-plan/，并告诉你「实现方看 impl-task、测试方看 test-task」
+```
+
+**Skill 自动替你跑的四步：**
+
+1. **起草 `draft`** —— 给需求文档，产出空白契约模板 + 填写提示词（不调模型）
+2. **填写契约** —— AI 逐条把需求转成可验验收条目，落在 `contract.yaml`（每条含 `suspect` 标注）
+3. **门禁 `lint`** —— 十项检查判定每条能否被机械判定；不通就给 `review.md` 改写建议，迭代到通过（退出码 0）
+4. **切任务包 `plan`** —— 产出 `impl-task/`（实现方）与 `test-task/`（测试方）两个物理隔离的任务包
+
+> ⚠️ Skill 是**你主动触发**的：不自动运行。它只编排流程，**不改** specgate 工具本身的算法（判据/词表/不变量）。
+> 想直接敲命令行也完全可以——见下方「三个子命令」，那是 Skill 自动化的同一套命令。
+
+**第一次用 Skill 会自动装好工具**：Skill 自带 `skill/scripts/ensure_specgate.mjs`，按需从 `github.com/supernisy/specgate` 克隆并装好唯一依赖（`yaml`，Node 22+），你无需提前准备。
+
+---
+
 ## 三条不可破的设计立场
 
 1. **lint 纯确定性**：不调任何模型，词表/正则/映射表全部写死在源码或 `constraints.yaml`。
 2. **误报比漏报严重**：宁可少拦，勿误报。主观词判定 = 命中主观词 **且** 无可测量锚点。
 3. **工具不替人决策**：把判断变成需人签字的条目（breaks.approved、assumed_output）。
 
-## 三个子命令
+## 三个子命令（手动用法；Skill 自动编排的就是这三步）
 
 ```bash
 # 1. 起草：给一份需求文档，产出空白契约模板 + 填写提示词（不调模型）
@@ -104,9 +132,8 @@ specgate/
   constraints.yaml            # verify 取值源（可改，不必动代码）
   src/
     cli.js                    # 位置参数分发 + 退出码
-    contract.js               # 结构校验（检查①）
     constraints.js            # verify_tools 加载（builtin 兜底，标 builtin）
-    checks.js                 # 十项检查编排 + 三层划分 + 终端/review.md 渲染
+    checks.js                 # 结构校验（检查①）+ 十项检查编排 + 三层划分 + 终端/review.md 渲染
     suggestions.js            # verify→建议映射（§5.2，绝不自动应用）
     draft.js                  # 模板+提示词生成
     plan.js                   # 两任务包 + 隔离自检
@@ -115,4 +142,20 @@ specgate/
     criteria/invariant.js     # 判据二 + 能力边界 + 状态覆盖
   templates/                  # contract.template.yaml / draft.prompt.md / test.prompt.md / verify-tools.md
   test/                       # 样本集 + 故障注入 + 两判据实测
+  skill/                      # specgate Skill（/specgate 触发）
+    SKILL.md                  # 流程编排定义（用户主动触发）
+    scripts/ensure_specgate.mjs # 自举：定位/克隆工具根目录并装依赖
 ```
+
+## Skill（可选 · 推荐）：用 `/specgate` 一步跑完
+
+本仓库自带一个 **specgate Skill**，把上面「起草 → 填写 → 门禁 → 切包」四步编排成一次对话即可完成的流程。
+
+**启用方式**（任选其一）：
+
+- 把 `skill/` 目录放进 WorkBuddy 的 skills 目录（用户级 `~/.workbuddy/skills/` 或项目级 `.workbuddy/skills/`），重启后输入 `/specgate` 即可触发；
+- 或直接从市场/对话里加载本仓库的 `skill/SKILL.md`。
+
+**触发后它会**：自动确保工具可用（首跑 `ensure_specgate.mjs` 会克隆本仓库并 `npm install yaml`）→ 跑 `draft` → 引导你填契约（AI 按 `draft.prompt.md` 提示逐条转写并标 `suspect`）→ 跑 `lint` 迭代到通过 → 跑 `plan` 切出两个任务包 → 告诉你产物路径和「实现方/测试方分别看哪」。
+
+> Skill 只编排、不改工具算法；它随时可被关掉改用命令行（见「三个子命令」）。要不要触发，由你决定。
