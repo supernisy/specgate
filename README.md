@@ -65,6 +65,27 @@ specgate plan <contract.yaml>
 
 > 位置参数，不用 flag。所有命令的第二个位置参数就是文件路径。
 
+## 30 秒最小 demo · 看门禁怎么拦
+
+把一份 invariants 写得全是「输出不为空」「退出码应当是整数」的契约喂给 specgate:
+
+```bash
+node src/cli.js lint <契约文件>     # → 退出码 2,review.md 列出每处修改建议
+node src/cli.js lint <合规契约>     # → 退出码 0,review.md 写着「全部通过」
+```
+
+![specgate FAIL review](docs/specgate-fail-review.png)
+*`review.md` 实际长这样 —— 每条拦截都给出五类可套用句式(增量关系 / 幂等性 / 单调性 / 可加性 / 对称性)。*
+
+最关键的两条拦下理由(可从上图直接看到):
+
+- **⑥ invariants 有效(判据二)**:`「采集结果始终是数字类型」` —— 这是**恒真废话**,写成测试永远通过,等于没测。specgate 要求 invariants 必须描述**输入变了结果怎么变**(蜕变关系)。
+- **措辞可判定性(判据一)**:主观词 + 无锚点必拦;有锚点放行。两级化(`suspect` 标注 + 词表兜底)互不重叠。
+
+> 字面一致 ≠ 判定一致。`invariant.js` 用的是固定词表(`src/words.js`)做字符串匹配 —— 词表外的动词(如"收窄/放宽")会被漏判,要写到词表里才会被拦。详见 §10「实现约束」。
+
+演示素材见 [verify-suite/acceptance/contract-bad.yaml](https://github.com/supernisy/verify-suite/blob/main/acceptance/contract-bad.yaml)(故意写坏的契约,跑 lint 出上图)。
+
 ## 退出码
 
 | 退出码 | 含义 |
