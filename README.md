@@ -77,7 +77,12 @@ node src/cli.js lint <合规契约>     # → 退出码 0,review.md 写着「全
 ![specgate FAIL review](docs/specgate-fail-review.png)
 *`review.md` 实际长这样 —— 每条拦截都给出五类可套用句式(增量关系 / 幂等性 / 单调性 / 可加性 / 对称性)。*
 
-最关键的两条拦下理由(可从上图直接看到):
+按上图建议把恒真废话改成蜕变关系后再跑一次,门禁通过:
+
+![specgate PASS review](docs/specgate-pass-review.png)
+*`review.md` 显示「全部通过」—— 契约可进入实现阶段。*
+
+最关键的两条拦下理由(在 FAIL 图里可直接看到):
 
 - **⑥ invariants 有效(判据二)**:`「采集结果始终是数字类型」` —— 这是**恒真废话**,写成测试永远通过,等于没测。specgate 要求 invariants 必须描述**输入变了结果怎么变**(蜕变关系)。
 - **措辞可判定性(判据一)**:主观词 + 无锚点必拦;有锚点放行。两级化(`suspect` 标注 + 词表兜底)互不重叠。
