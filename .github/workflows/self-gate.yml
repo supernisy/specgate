@@ -1,0 +1,42 @@
+name: specgate 门禁行为回归
+
+# 镜像 verify-suite 侧的门禁：用 specgate 自己的样本契约证明
+# 「好契约通过、坏契约被拦」的门禁逻辑没有被改坏。
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'test/samples/**'
+      - '.github/workflows/self-gate.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'test/samples/**'
+
+permissions:
+  contents: read
+
+jobs:
+  gate-behavior:
+    name: 好契约必须过 / 坏契约必须拦
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm install
+
+      - name: 好样本必须通过门禁
+        run: node src/cli.js lint test/samples/login-pass.yaml
+
+      - name: 坏样本必须被门禁拦截
+        run: |
+          node src/cli.js lint test/samples/demo-fail.yaml && {
+            echo "❌ 坏契约竟被放行，门禁逻辑回归！"; exit 1; }
+          echo "✅ 坏契约被正确拦截"
