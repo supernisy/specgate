@@ -45,7 +45,7 @@ specgate： 产出 contract.yaml + review.md + specgate-plan/，并告诉你「�
 2. **误报比漏报严重**：宁可少拦，勿误报。主观词判定 = 命中主观词 **且** 无可测量锚点。
 3. **工具不替人决策**：把判断变成需人签字的条目（breaks.approved、assumed_output）。
 
-## 三个子命令（手动用法；Skill 自动编排的就是这三步）
+## 四个子命令（手动用法；Skill 自动编排的是前三步，bridge 为桥接附加项）
 
 ```bash
 # 1. 起草：给一份需求文档，产出空白契约模板 + 填写提示词（不调模型）
@@ -61,6 +61,12 @@ specgate plan <contract.yaml>
 #   隔离自检：从 impl/context.md 提取源码路径，在 test-task 全部文件里搜，
 #   命中即失败（退出码 2）。context.md 只在首次生成，已存在则保留，
 #   实现方填完真实路径后重跑 plan 才做隔离自检。
+
+# 4. bridge：OpenSpec spec.md → contract.yaml（桥接层，确定性解析，不调模型）
+specgate bridge <spec.md> [out.yaml]
+#   把 OpenSpec 的 Requirement/Scenario（**WHEN**/**THEN**/**AND**）转成验收契约；
+#   verify 用关键词启发式从 9 个合法值推断；suspect 不填（交 draft 阶段补）。
+#   产出后跑 `specgate lint` 即进入门禁。
 ```
 
 > 位置参数，不用 flag。所有命令的第二个位置参数就是文件路径。
@@ -90,6 +96,35 @@ node src/cli.js lint <合规契约>     # → 退出码 0,review.md 写着「全
 > 字面一致 ≠ 判定一致。`invariant.js` 用的是固定词表(`src/words.js`)做字符串匹配 —— 词表外的动词(如"收窄/放宽")会被漏判,要写到词表里才会被拦。详见 §10「实现约束」。
 
 演示素材见 [verify-suite/acceptance/contract-bad.yaml](https://github.com/supernisy/verify-suite/blob/main/acceptance/contract-bad.yaml)(故意写坏的契约,跑 lint 出上图)。
+
+## 桥接 OpenSpec（把 OpenSpec 产物自动转成契约）
+
+specgate 的 `draft` 吃「需求文档」、`lint` 吃「契约」，**都不直接吃 OpenSpec 的 `spec.md`**。
+`bridge` 就是这段**桥接转换层**：把 OpenSpec 的 `spec.md` 自动转成 `contract.yaml`，再进 `lint` 门禁。
+（交接文档指出这是 specgate 最值得开发的衔接点。）
+
+```bash
+# 1. 转换（确定性解析，无模型）
+specgate bridge path/to/spec.md contract.generated.yaml
+
+# 2. 进门禁（与手写的契约走同一套十项检查）
+specgate lint contract.generated.yaml
+```
+
+**映射规则（详见 `AGENTS.md`）**：
+
+| OpenSpec spec.md | contract.yaml |
+|---|---|
+| `### Requirement: <name>` | 一组 `accept` 条目（`id` = kebab(name)+场景序号） |
+| `#### Scenario` + `- **WHEN**` | `when`（其后 `- **AND**` 续到 when） |
+| `- **THEN**` + `- **AND**` | `then` |
+| `- **GIVEN**` | `given` |
+| requirement 描述段 | `given`（无 GIVEN 时）/ `intent` |
+| `verify` | OpenSpec 不产出 → 桥接用**关键词启发式**从 9 个合法值推断（API→contract-test、UI→unit-visual、状态迁移→trace…） |
+| `## REMOVED Requirements` | `out_of_scope` 列出被移除的需求 |
+
+> 桥接**只产契约、不调 lint**、也不填 `suspect`（确定性桥接无法判断「能否写断言」，留待 draft 阶段 AI 标注，符合「只加严不放宽」）。`invariants`/`breaks`/`uses`/`states` 同样留待 `lint` 反馈后补。
+> 样例见 `test/samples/openspec-spec.md`（含 ADDED/MODIFIED/REMOVED）与生成的 `openspec-contract.yaml`。
 
 ## 退出码
 
@@ -155,9 +190,11 @@ node test/measure.mjs  # 打印两判据误报/漏报率
 ```
 specgate/
   package.json
+  AGENTS.md                   # 开发约定与桥接层设计决策（AI 自主落档）
   constraints.yaml            # verify 取值源（可改，不必动代码）
   src/
-    cli.js                    # 位置参数分发 + 退出码
+    cli.js                    # 位置参数分发 + 退出码（draft/lint/plan/bridge）
+    bridge.js                 # 桥接层：OpenSpec spec.md → contract.yaml（确定性解析）
     constraints.js            # verify_tools 加载（builtin 兜底，标 builtin）
     checks.js                 # 结构校验（检查①）+ 十项检查编排 + 三层划分 + 终端/review.md 渲染
     suggestions.js            # verify→建议映射（§5.2，绝不自动应用）

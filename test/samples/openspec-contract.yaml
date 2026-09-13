@@ -1,0 +1,46 @@
+contract: openspec-spec
+intent: |-
+  【User Login】
+  The system SHALL allow a registered user to log in with email and password,
+  and return a session token via the REST API.
+
+  【Login Page Rendering】
+  The login page SHALL render the email and password fields and a submit button.
+
+  【Dashboard Navigation】
+  After login, the UI SHALL transition to the dashboard and reflect the loading state.
+
+  【Password Reset】
+  The reset flow now uses a 6-digit code instead of a link.
+accept:
+  - id: user-login-1
+    given: |-
+      The system SHALL allow a registered user to log in with email and password,
+      and return a session token via the REST API.
+    when: a registered user submits valid credentials to the login endpoint
+    then: the API returns HTTP 200 with a session token；the response body contains the user id
+    verify: contract-test
+  - id: user-login-2
+    given: |-
+      The system SHALL allow a registered user to log in with email and password,
+      and return a session token via the REST API.
+    when: a user submits a wrong password
+    then: the API returns HTTP 401；no session is created
+    verify: contract-test
+  - id: login-page-rendering-1
+    given: The login page SHALL render the email and password fields and a submit button.
+    when: the user opens the login page
+    then: the email input, password input and submit button are displayed；the submit button shows the text "登录"
+    verify: unit-visual
+  - id: dashboard-navigation-1
+    given: the user just submitted valid credentials
+    when: the auth response arrives
+    then: the view migrates from the loading state to the dashboard state；the spinner is removed
+    verify: trace
+  - id: password-reset-1
+    given: The reset flow now uses a 6-digit code instead of a link.
+    when: the user requests a reset
+    then: a 6-digit code is sent to the email
+    verify: unit
+out_of_scope:
+  - 不再支持（REMOVED）：Social Login

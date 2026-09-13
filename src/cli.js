@@ -11,18 +11,20 @@ import { loadConstraints } from './constraints.js';
 import { runLint, renderTerminal, renderReview, validateStructure } from './checks.js';
 import { runDraft } from './draft.js';
 import { runPlan } from './plan.js';
+import { runBridge } from './bridge.js';
 
 function usage() {
-  console.error('用法：specgate <draft|lint|plan> <file>');
-  console.error('  draft <requirement.md>  需求 → 空白契约模板 + 填写提示词（不调模型）');
-  console.error('  lint  <contract.yaml>   十项检查，终端摘要 + 输出 review.md');
-  console.error('  plan  <contract.yaml>    → impl-task / test-task 两个任务包');
+  console.error('用法：specgate <draft|lint|plan|bridge> <file> [out]');
+  console.error('  draft <requirement.md>     需求 → 空白契约模板 + 填写提示词（不调模型）');
+  console.error('  lint  <contract.yaml>      十项检查，终端摘要 + 输出 review.md');
+  console.error('  plan  <contract.yaml>      → impl-task / test-task 两个任务包');
+  console.error('  bridge <spec.md> [out.yaml] OpenSpec spec.md → contract.yaml（确定性桥接，不调模型）');
   process.exit(1);
 }
 
 function main() {
   const [, , cmd, file] = process.argv;
-  if (!cmd || !file || !['draft', 'lint', 'plan'].includes(cmd)) usage();
+  if (!cmd || !file || !['draft', 'lint', 'plan', 'bridge'].includes(cmd)) usage();
   const filePath = resolve(process.cwd(), file);
   if (!existsSync(filePath)) {
     console.error(`文件不存在：${filePath}`);
@@ -43,6 +45,14 @@ function main() {
       const r = runPlan(filePath, outBase);
       console.log(r.message);
       process.exit(r.exitCode);
+    }
+
+    if (cmd === 'bridge') {
+      const outArg = process.argv[4]; // 可选：输出契约路径（位置参数，不用 flag）
+      const r = runBridge(filePath, outArg);
+      if (outArg) console.log(`✓ 已生成契约：${r.outPath}（${r.count} 条验收）`);
+      else process.stdout.write(r.yaml);
+      process.exit(0);
     }
 
     // ---- lint ----

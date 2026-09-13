@@ -307,3 +307,89 @@ test('YAML 解析失败给出可读错误（不抛栈）', () => {
   // 通过 cli 间接验证：这里仅确认 parse 抛错被上层捕获为可读信息
   assert.ok(true);
 });
+
+// ---------------------------------------------------------------------------
+// 桥接层（OpenSpec spec.md → contract.yaml）：解析映射 + verify 推断 + 结构合法
+// ---------------------------------------------------------------------------
+import { parseSpec, buildContract, runBridge } from '../src/bridge.js';
+import { writeFileSync as wf2, mkdtempSync as mkt2, rmSync as rm2 } from 'node:fs';
+import { tmpdir as td2 } from 'node:os';
+import { join as j2 } from 'node:path';
+import { stringify, parse } from 'yaml';
+
+const SPEC = `# Spec: Demo
+
+## ADDED Requirements
+
+### Requirement: User Login
+The system SHALL let a user log in via the REST API.
+
+#### Scenario: Success
+- **WHEN** a user submits valid credentials to the login endpoint
+- **THEN** the API returns HTTP 200
+- **AND** a session token is returned
+
+### Requirement: Page Render
+The login page SHALL render a submit button.
+
+#### Scenario: Layout
+- **WHEN** the user opens the page
+- **THEN** the submit button is displayed
+
+### Requirement: Nav
+The view SHALL migrate from loading to dashboard.
+
+#### Scenario: Transition
+- **GIVEN** the user is authed
+- **WHEN** the response arrives
+- **THEN** the view migrates to dashboard
+- **AND** spinner is removed
+
+## REMOVED Requirements
+
+### Requirement: Social Login
+No longer supported.
+`;
+
+test('桥接：Requirement→accept 映射、id 序号、WHEN/THEN/AND 拼接', () => {
+  const { requirements } = parseSpec(SPEC);
+  assert.equal(requirements.length, 3);
+  const login = requirements.find((r) => r.name === 'User Login');
+  assert.equal(login.scenarios.length, 1);
+  const c = buildContract(SPEC, { fileStem: 'demo' });
+  assert.equal(c.accept.length, 3);
+  const ids = c.accept.map((a) => a.id);
+  assert.deepEqual(ids, ['user-login-1', 'page-render-1', 'nav-1']);
+  const login1 = c.accept[0];
+  assert.match(login1.when, /login endpoint/);
+  assert.match(login1.then, /HTTP 200.*session token/); // AND 续到 THEN
+  assert.equal(login1.given, 'The system SHALL let a user log in via the REST API.'); // 无 GIVEN 子弹 → 回退 req 描述
+  assert.equal(c.accept[2].given, 'the user is authed'); // GIVEN → given
+});
+
+test('桥接：verify 启发式推断（API→contract-test / UI→unit-visual / 迁移→trace）', () => {
+  const c = buildContract(SPEC, { fileStem: 'demo' });
+  assert.equal(c.accept[0].verify, 'contract-test'); // login endpoint / API / HTTP
+  assert.equal(c.accept[1].verify, 'unit-visual');   // render / button / displayed
+  assert.equal(c.accept[2].verify, 'trace');          // migrates → 状态迁移
+});
+
+test('桥接：REMOVED 段进入 out_of_scope 且非空', () => {
+  const c = buildContract(SPEC, { fileStem: 'demo' });
+  assert.ok(Array.isArray(c.out_of_scope) && c.out_of_scope.length > 0);
+  assert.ok(c.out_of_scope.some((s) => /Social Login/.test(s)));
+});
+
+test('桥接：runBridge 产出通过结构校验的契约（可进 lint）', () => {
+  const tmp = mkt2(j2(td2(), 'sg-bridge-'));
+  const specPath = j2(tmp, 'spec.md');
+  wf2(specPath, SPEC);
+  const outPath = j2(tmp, 'contract.yaml');
+  const r = runBridge(specPath, outPath);
+  assert.equal(r.ok, true);
+  const generated = parse(readFileSync(outPath, 'utf8'));
+  const v = validateStructure(generated);
+  assert.equal(v.ok, true, '桥接产出应过结构校验：' + JSON.stringify(v.errors));
+  rm2(tmp, { recursive: true, force: true });
+});
+
