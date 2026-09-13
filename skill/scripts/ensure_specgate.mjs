@@ -8,7 +8,7 @@
 //     3) 自动 git clone https://github.com/supernisy/specgate 到缓存并 npm install yaml
 // 进度信息走 stderr；唯一 stdout 是根目录路径。
 // ============================================================================
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { execSync } from 'node:child_process';
@@ -16,6 +16,7 @@ import { execSync } from 'node:child_process';
 const HOME = homedir();
 const CACHE = resolve(HOME, '.workbuddy', 'specgate');
 const REPO = 'https://github.com/supernisy/specgate';
+const NODE_VERSIONS_DIR = resolve(HOME, '.workbuddy', 'binaries', 'node', 'versions');
 
 function hasCli(dir) {
   return !!dir && existsSync(resolve(dir, 'src', 'cli.js'));
@@ -27,30 +28,54 @@ function findExisting() {
   return null;
 }
 
-// 在环境里找一个能用的 node（bare 'node' 或已知的 managed 路径）
+// 托管 node 的版本目录（按版本号从新到旧；目录名形如 22.22.2-3）
+function managedNodeDirs() {
+  try {
+    return readdirSync(NODE_VERSIONS_DIR, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
+      .map((e) => e.name)
+      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))
+      .map((v) => resolve(NODE_VERSIONS_DIR, v));
+  } catch {
+    return [];
+  }
+}
+
+// 取 bin 的主版本号；不可用返回 null
+function nodeMajor(bin) {
+  try {
+    const out = execSync(bin === 'node' ? 'node --version' : `"${bin}" --version`, {
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).toString().trim();
+    const m = out.match(/v?(\d+)\./);
+    return m ? Number(m[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
+// 找一个 Node 22+：PATH 里的 node 优先，其次托管目录（版本从新到旧）
 function nodeBin() {
-  const candidates = [
-    'node',
-    resolve(HOME, '.workbuddy', 'binaries', 'node', 'versions', '22.22.2-2', 'node.exe'),
-    'C:\\Users\\super\\.workbuddy\\binaries\\node\\versions\\22.22.2-2\\node.exe',
-  ];
+  const candidates = ['node'];
+  for (const dir of managedNodeDirs()) {
+    candidates.push(resolve(dir, process.platform === 'win32' ? 'node.exe' : 'bin/node'));
+  }
   for (const c of candidates) {
-    try {
-      execSync(c === 'node' ? 'node --version' : `"${c}" --version`, { stdio: 'ignore' });
-      return c;
-    } catch { /* try next */ }
+    const major = nodeMajor(c);
+    if (major !== null && major >= 22) return c;
   }
   return null;
 }
 
-// 用可用的 node 跑 npm-cli.js install（无独立 npm 时回退）
+// 用可用的 node 跑 npm-cli.js install（无独立 npm 时回退）。npm 路径同样不写死版本。
 function installDeps(home, node) {
-  const npmCli = resolve(
-    HOME, '.workbuddy', 'binaries', 'node', 'versions', '22.22.2-2',
-    'node_modules', 'npm', 'bin', 'npm-cli.js',
-  );
+  let npmCli = null;
+  for (const dir of managedNodeDirs()) {
+    const p = resolve(dir, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+    if (existsSync(p)) { npmCli = p; break; }
+  }
   try {
-    if (existsSync(npmCli) && node && node !== 'node') {
+    if (npmCli && node && node !== 'node') {
       execSync(`"${node}" "${npmCli}" install yaml`, { cwd: home, stdio: ['ignore', 'ignore', 'inherit'] });
     } else {
       execSync('npm install yaml', { cwd: home, stdio: ['ignore', 'ignore', 'inherit'] });

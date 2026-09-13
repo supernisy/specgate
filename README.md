@@ -32,8 +32,10 @@ specgate： 产出 contract.yaml + review.md + specgate-plan/，并告诉你「�
 3. **门禁 `lint`** —— 十项检查判定每条能否被机械判定；不通就给 `review.md` 改写建议，迭代到通过（退出码 0）
 4. **切任务包 `plan`** —— 产出 `impl-task/`（实现方）与 `test-task/`（测试方）两个物理隔离的任务包
 
+**需求已经在 OpenSpec 里？不用重抄。** Skill 会走桥接路线：`bridge` 一条命令把 `spec.md` 转成契约，再进门禁 —— 见下方「桥接 OpenSpec」。
+
 > ⚠️ Skill 是**你主动触发**的：不自动运行。它只编排流程，**不改** specgate 工具本身的算法（判据/词表/不变量）。
-> 想直接敲命令行也完全可以——见下方「三个子命令」，那是 Skill 自动化的同一套命令。
+> 想直接敲命令行也完全可以——见下方「四个子命令」，那是 Skill 自动化的同一套命令。
 
 **第一次用 Skill 会自动装好工具**：Skill 自带 `skill/scripts/ensure_specgate.mjs`，按需从 `github.com/supernisy/specgate` 克隆并装好唯一依赖（`yaml`，Node 22+），你无需提前准备。
 
@@ -45,7 +47,7 @@ specgate： 产出 contract.yaml + review.md + specgate-plan/，并告诉你「�
 2. **误报比漏报严重**：宁可少拦，勿误报。主观词判定 = 命中主观词 **且** 无可测量锚点。
 3. **工具不替人决策**：把判断变成需人签字的条目（breaks.approved、assumed_output）。
 
-## 四个子命令（手动用法；Skill 自动编排的是前三步，bridge 为桥接附加项）
+## 四个子命令（手动用法；Skill 会自动编排这四条，你只要说明需求从哪来）
 
 ```bash
 # 1. 起草：给一份需求文档，产出空白契约模板 + 填写提示词（不调模型）
@@ -65,8 +67,8 @@ specgate plan <contract.yaml>
 # 4. bridge：OpenSpec spec.md → contract.yaml（桥接层，确定性解析，不调模型）
 specgate bridge <spec.md> [out.yaml]
 #   把 OpenSpec 的 Requirement/Scenario（**WHEN**/**THEN**/**AND**）转成验收契约；
-#   verify 用关键词启发式从 9 个合法值推断；suspect 不填（交 draft 阶段补）。
-#   产出后跑 `specgate lint` 即进入门禁。
+#   verify 用关键词启发式从合法取值推断；suspect / invariants 故意留空，
+#   由 AI 在补全阶段填好后，再跑 `specgate lint` 进门禁。
 ```
 
 > 位置参数，不用 flag。所有命令的第二个位置参数就是文件路径。
@@ -101,13 +103,22 @@ node src/cli.js lint <合规契约>     # → 退出码 0,review.md 写着「全
 
 specgate 的 `draft` 吃「需求文档」、`lint` 吃「契约」，**都不直接吃 OpenSpec 的 `spec.md`**。
 `bridge` 就是这段**桥接转换层**：把 OpenSpec 的 `spec.md` 自动转成 `contract.yaml`，再进 `lint` 门禁。
-（交接文档指出这是 specgate 最值得开发的衔接点。）
+
+**什么时候值得从 OpenSpec 起步**（而不是直接丢一份需求文档）——命中任一条就该考虑：
+
+- 需求超过 5 条，或一条需求下要分多个场景（正常 / 异常 / 边界）
+- 需求会反复增删改，需要留下「加了什么 / 改了什么 / 删了什么」的记录（→ `## ADDED / MODIFIED / REMOVED Requirements`）
+- 多人协作，需求要能被不读代码的人 review
+
+已经在用 OpenSpec 的话，下游接上 specgate 就是一条命令的事；还没用也不打紧——`draft` 路线照样出得了门禁结论。
 
 ```bash
 # 1. 转换（确定性解析，无模型）
 specgate bridge path/to/spec.md contract.generated.yaml
 
-# 2. 进门禁（与手写的契约走同一套十项检查）
+# 2. 补全（AI 参与）：桥接故意留空的 suspect / invariants 在这里补，不补等着被 lint 拦
+
+# 3. 进门禁（与手写的契约走同一套十项检查）
 specgate lint contract.generated.yaml
 ```
 
@@ -120,10 +131,10 @@ specgate lint contract.generated.yaml
 | `- **THEN**` + `- **AND**` | `then` |
 | `- **GIVEN**` | `given` |
 | requirement 描述段 | `given`（无 GIVEN 时）/ `intent` |
-| `verify` | OpenSpec 不产出 → 桥接用**关键词启发式**从 9 个合法值推断（API→contract-test、UI→unit-visual、状态迁移→trace…） |
+| `verify` | OpenSpec 不产出 → 桥接用**关键词启发式**从 `constraints.yaml` 的合法取值中推断（API→`contract-test`、UI→`unit-visual`、状态迁移→`trace`…兜底 `unit`） |
 | `## REMOVED Requirements` | `out_of_scope` 列出被移除的需求 |
 
-> 桥接**只产契约、不调 lint**、也不填 `suspect`（确定性桥接无法判断「能否写断言」，留待 draft 阶段 AI 标注，符合「只加严不放宽」）。`invariants`/`breaks`/`uses`/`states` 同样留待 `lint` 反馈后补。
+> ⚠️ **桥接 ≠ 全自动**：`bridge` 只做结构搬运——`suspect` **故意留空**（确定性解析无法判断「测试方能否写出断言」），`invariants`/`breaks`/`uses`/`states` 也不臆造（OpenSpec 不产出这些）。这两类必须由 AI 补全后再进门禁，符合「只加严不放宽」。
 > 样例见 `test/samples/openspec-spec.md`（含 ADDED/MODIFIED/REMOVED）与生成的 `openspec-contract.yaml`。
 
 ## 退出码
@@ -212,13 +223,21 @@ specgate/
 
 ## Skill（可选 · 推荐）：用 `/specgate` 一步跑完
 
-本仓库自带一个 **specgate Skill**，把上面「起草 → 填写 → 门禁 → 切包」四步编排成一次对话即可完成的流程。
+本仓库自带一个 **specgate Skill**，把整条流程编排成一次对话即可完成。
 
 **启用方式**（任选其一）：
 
 - 把 `skill/` 目录放进 WorkBuddy 的 skills 目录（用户级 `~/.workbuddy/skills/` 或项目级 `.workbuddy/skills/`），重启后输入 `/specgate` 即可触发；
 - 或直接从市场/对话里加载本仓库的 `skill/SKILL.md`。
 
-**触发后它会**：自动确保工具可用（首跑 `ensure_specgate.mjs` 会克隆本仓库并 `npm install yaml`）→ 跑 `draft` → 引导你填契约（AI 按 `draft.prompt.md` 提示逐条转写并标 `suspect`）→ 跑 `lint` 迭代到通过 → 跑 `plan` 切出两个任务包 → 告诉你产物路径和「实现方/测试方分别看哪」。
+**它会先判断你的需求从哪来，再选路线：**
 
-> Skill 只编排、不改工具算法；它随时可被关掉改用命令行（见「三个子命令」）。要不要触发，由你决定。
+| 你的情况 | Skill 走的路线 |
+|---|---|
+| 丢来一份需求文档 / 一段需求文字 | `draft` → 引导填契约（标 `suspect`）→ `lint` 迭代到通过 → `plan` 切包 |
+| 手里已有 OpenSpec 的 `spec.md` | `bridge` 转成契约 → 补全 `suspect`/`invariants` → `lint` → `plan` |
+| 条数多 / 场景多 / 要管增删改记录 | 先建议你上 OpenSpec，再走桥接路线（**不采用也没关系**） |
+
+**触发后它会**：自动确保工具可用（首跑 `ensure_specgate.mjs` 会克隆本仓库并 `npm install yaml`）→ 按上表选路线跑完 → 告诉你产物路径和「实现方/测试方分别看哪」。
+
+> Skill 只编排、不改工具算法；它随时可被关掉改用命令行（见「四个子命令」）。要不要触发，由你决定。
