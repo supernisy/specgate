@@ -31,10 +31,14 @@ node <skill_dir>/scripts/ensure_specgate.mjs
 ```
 
 - 脚本只向 stdout 打印**一行**：specgate 根目录，agent 捕获这一行作为 `$SG_HOME`。
-- 定位优先级：`$SPEC_GATE_HOME` 环境变量 > `~/.workbuddy/specgate`（已克隆）> 自动 `git clone https://github.com/supernisy/specgate` 到缓存并 `npm install yaml`。
+- 定位优先级：`$SPEC_GATE_HOME` 环境变量 > 已克隆的缓存目录（`~/.workbuddy/specgate` / `~/.codebuddy/specgate`，按本机实际存在的宿主目录取）> 自动 `git clone https://github.com/supernisy/specgate` 到缓存并 `npm install yaml`。两边宿主目录都没有时，缓存落到中立位置 `~/.specgate`。
 - 若脚本报告未找到 npm，请在 `$SG_HOME` 手动执行 `npm install yaml`（用你环境中的 npm；Node 22+）。
+- **缓存可能滞后于仓库**（首次克隆后不会自动更新）。要最新版就先跑一次
+  `node <skill_dir>/scripts/ensure_specgate.mjs --pull`——它只刷新**自管缓存**，
+  `$SPEC_GATE_HOME` 指向的克隆绝不会被动。平时不加 `--pull` 即零网络。
+- 本 skill 同时装在 WorkBuddy（`~/.workbuddy/skills/`）与 CodeBuddy（`~/.codebuddy/skills/`）下，脚本对宿主无偏好。想跳过整个自举流程，设 `SPEC_GATE_HOME` 指向已有的 specgate 克隆即可。
 
-> 提示：运行本环境的 `node` 若不在 PATH，请用其绝对路径（形如 `C:\Users\super\.workbuddy\binaries\node\versions\<版本>\node.exe`，具体版本以本机 `binaries/node/versions/` 下的实际目录为准）替换下面所有 `node`。
+> 提示：运行本环境的 `node` 若不在 PATH，请用其绝对路径替换下面所有 `node`。WorkBuddy 的托管 node 形如 `C:\Users\super\.workbuddy\binaries\node\versions\<版本>\node.exe`，CodeBuddy 形如 `~/.codebuddy/binaries/node/versions/<版本>/node.exe`，具体以本机实际目录为准。
 
 ## 第 0 步：先看需求从哪来 —— 这决定走哪条路
 
