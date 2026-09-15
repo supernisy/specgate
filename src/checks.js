@@ -1,8 +1,8 @@
 // ============================================================================
-// 十项检查（§6）：八项阻塞 + 两项只提醒
+// 十一项检查（§6）：八项阻塞 + 三项只提醒
 //   ① 结构合法 ② verify 合法 ③ 措辞可判定 ④ breaks 已批准
 //   ⑤ manual 占比 ⑥ invariants 有效 ⑦ 计算类有不变量 ⑧ 期望值已确认
-//   ⑨ 能力边界（提醒） ⑩ 接口状态覆盖（提醒）
+//   ⑨ 能力边界（提醒） ⑩ 接口状态覆盖（提醒） ⑪ verify 分布（提醒）
 //   三层划分依据 = 判定确定性程度，不是重要程度。
 // ============================================================================
 import { checkWording } from './criteria/wording.js';
@@ -130,7 +130,11 @@ function checkComputeHasInvariant(doc) {
   const bad = [];
   for (const a of doc.accept) {
     const hasInv = Array.isArray(a.invariants) && a.invariants.length > 0;
-    if (COMPUTE_REGEX.test(a.then || '') && !hasInv) {
+    // 改动 10·⑦放宽：THEN 本身已是有效蜕变关系，同样视为满足⑦。
+    //   理由：OpenSpec 配套路线以 spec.md 为唯一事实源，
+    //   不该逼用户把不变量再复制进这份派生 contract。
+    const thenOk = checkInvariant(a.then).ok;
+    if (COMPUTE_REGEX.test(a.then || '') && !hasInv && !thenOk) {
       bad.push({ acceptId: a.id, then: a.then });
     }
   }
@@ -174,6 +178,47 @@ function checkStateCoverage(doc) {
   return { pass: true, api, declared: declared.length, total: STATE_ENUM.length, missing, items: api ? missing : [] };
 }
 
+// ---------- ⑪ verify 分布（提醒；只产 warnings，绝不进 blocking/issues） ----
+//   改动 11·T4：不改退出码。只提示两件事——
+//     1) 有多少条 verify 是机器推断的（可用 --keep-verify 逐条显式化后消除）
+//     2) 措辞明显是 UI/交互、verify 却不是视觉手段的条目
+const VISUAL_WORDS = ['展示', '列表', '按钮', '页面', '样式', '卡片', '菜单', '加载态'];
+const INTERACT_WORDS = ['点击', 'hover', '滚动', '切换', '状态迁移'];
+const VISUAL_VERIFY = ['geo', 'ax', 'unit-visual', 'trace'];
+
+function checkVerifyDistribution(doc) {
+  const items = [];
+  const withSource = doc.accept.filter((a) => a.verify_source);
+  const inferred = withSource.filter((a) => a.verify_source === 'inferred');
+  if (inferred.length > 0) {
+    const pct = Math.round((inferred.length / withSource.length) * 100);
+    const ids = inferred.map((a) => a.id);
+    items.push({
+      kind: 'inferred-ratio',
+      count: inferred.length,
+      total: withSource.length,
+      pct,
+      ids,
+      line: `verify 推断占比 ${inferred.length}/${withSource.length} = ${pct}%（${ids.join(' ')}）→ 逐条显式化（重跑 bridge 带 --keep-verify）后消除`,
+    });
+  }
+  for (const a of doc.accept) {
+    const text = `${a.when || ''}${a.then || ''}`;
+    const lower = text.toLowerCase();
+    const hit = VISUAL_WORDS.some((w) => text.includes(w))
+      || INTERACT_WORDS.some((w) => lower.includes(w.toLowerCase()));
+    if (hit && !VISUAL_VERIFY.includes(a.verify)) {
+      items.push({
+        kind: 'ui-mismatch',
+        acceptId: a.id,
+        verify: a.verify,
+        line: `${a.id} 措辞是 UI/交互，但 verify=${a.verify} 不是视觉手段 → 建议改成 geo / ax / unit-visual / trace 之一`,
+      });
+    }
+  }
+  return { pass: true, items };
+}
+
 // ============================================================================
 // 编排
 // ============================================================================
@@ -195,6 +240,7 @@ export function runLint(doc, constraints) {
   const c8 = checkAssumedOutput(doc);
   const c9 = checkCapability(doc);
   const c10 = checkStateCoverage(doc);
+  const c11 = checkVerifyDistribution(doc);
 
   // 阻塞项：②③⑤⑥⑦（①④⑧归为决策/结构，结构已前置）
   const blocking = [
@@ -207,6 +253,7 @@ export function runLint(doc, constraints) {
   const warnings = [
     { id: '⑨', name: '能力边界', ...c9 },
     { id: '⑩', name: '接口状态覆盖', ...c10 },
+    { id: '⑪', name: 'verify 分布', ...c11 },
   ];
 
   const issues = []; // 需要修改
@@ -295,6 +342,7 @@ export function renderTerminal(result, contractId) {
     for (const it of w.items) {
       if (w.id === '⑨') L.push(`      ${it.acceptId}  ${it.type}：${it.why}`);
       if (w.id === '⑩') L.push(`      状态「${it.state}」未声明：${it.reason}`);
+      if (w.id === '⑪') L.push(`      ${it.line}`);
     }
     L.push('');
   }
@@ -374,6 +422,7 @@ export function renderReview(result, contractId) {
     for (const it of w.items) {
       if (w.id === '⑨') L.push(`- ${it.acceptId} 命中「${it.type}」：${it.why}`);
       if (w.id === '⑩') L.push(`- 状态「${it.state}」未声明：${it.reason}`);
+      if (w.id === '⑪') L.push(`- ${it.line}`);
     }
     L.push('');
   }

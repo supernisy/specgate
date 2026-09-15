@@ -1,12 +1,15 @@
 // ============================================================================
 // 判据一：措辞可判定性（§4.1 - §4.6）—— 两级化（修改单）
-//   最终拦下 = （suspect === true 且 无锚点） 或 （命中主观词 且 无锚点）
+//   最终拦下 = （suspect === true 且 无锚点） 或 （命中主观词/复合表述/恒真断言 且 无锚点）
 //     · 第一级 suspect：起草时由 AI 标注，lint 只读不判；只能加严，不能放宽
 //     · 第二级词表：原有兜底层，不可关闭（哪怕 suspect: false 也照常跑）
+//        三类信号：主观词（中/英）、复合表述、恒真断言（TAUTOLOGY_PATTERNS）
 //   ⚠️ 绝不能只用词表。误报率一高门禁就会被绕过。词表只是怀疑信号。
+//   ⚠️ 锚点表优先级高于一切词表：有锚点即放行（锚点漏一种 = 误报，后果最重）。
 // ============================================================================
 import {
   SUBJECTIVE_ZH, SUBJECTIVE_EN, COMPOSITE_PATTERNS, CONTEXT_EXCLUSION,
+  TAUTOLOGY_PATTERNS,
 } from '../words.js';
 
 // 先在待检文本里挖掉中性技术词（§4.4），避免大量误报
@@ -36,6 +39,32 @@ function hasAnchor(text) {
   if (/(不出现|等于|包含|包含于|跳转到|重定向到|退出码|移除|加入|位于)/.test(text)) return true;
   // 顺序 / 集合类断言（修改单·新增一类锚点）
   if (/(倒序|升序|降序|排序|置顶|置底|去重)/.test(text)) return true;
+
+  // 枚举映射-ASCII：0: Success / 1) NotFound（改动 2）
+  if (/(^|[\s(（:：])\d+\s*[:：)]\s*[A-Za-z][A-Za-z0-9_]*/.test(text)) return true;
+
+  // 枚举映射-中文：取冒号后的名字，名字本身命中主观词则不算锚点（挡「1: 体验良好」）
+  for (const seg of text.match(/\d+\s*[:：)]\s*[\u4e00-\u9fa5]+/g) || []) {
+    const name = seg.replace(/^\d+\s*[:：)]\s*/, '');
+    if (!SUBJECTIVE_ZH.some((w) => name.includes(w))) return true;
+  }
+
+  // 带扩展名的文件路径（改动 2）
+  if (/[\w./-]+\.(md|tsx?|jsx?|ya?ml|json|py|go|sh|css|html)\b/.test(text)) return true;
+
+  // 英文 code 词：exit code / status code / error codes（改动 2）
+  if (/\b(exit|status|error)\s*codes?\b/i.test(text)) return true;
+
+  // 反引号锚点（改动 3·T2b）：真标识符/命令放行；`友好` `fast` 这类伪装不放行
+  for (const frag of text.match(/`[^`]+`/g) || []) {
+    const inner = frag.slice(1, -1);
+    if (!/[A-Za-z]/.test(inner)) continue;        // 不含英文字母 → 不是锚点
+    if (/[\u4e00-\u9fa5]/.test(inner)) continue;  // 含中文 → 走引号锚点（防 `友好`）
+    const words = inner.toLowerCase().split(/[^a-z]+/).filter(Boolean);
+    if (words.length && words.every((w) => SUBJECTIVE_EN.includes(w))) continue; // 防 `fast`
+    return true;                                   // 真标识符 / 命令，如 `getUserList()`
+  }
+
   return false;
 }
 
@@ -66,6 +95,11 @@ export function checkWording(rawThen, suspect) {
     const m = text.match(re);
     if (m) hits.push(`复合表述「${m[0]}」`);
   }
+  // 恒真断言（改动 5·T3）：与主观词同层，沿用下方同一个 anchor 门控，不新增独立门控
+  for (const re of TAUTOLOGY_PATTERNS) {
+    const m = text.match(re);
+    if (m) hits.push(`恒真断言「${m[0]}」`);
+  }
 
   const anchor = hasAnchor(text);
   const wordBlock = hits.length > 0 && !anchor;     // 原有词表层（兜底层，不可关闭）
@@ -82,7 +116,7 @@ export function checkWording(rawThen, suspect) {
     // 有可测量锚点 → 必须放行（如「视觉度量差异不超过 1px」）
     return {
       hit: true,
-      reason: `命中${hits.join('、')}，但 then 中没有任何可测量锚点（数值+单位 / 具体文案 / HTTP 状态码 / 状态名 / 错误码 / 布尔断言 / 顺序·集合类），无法被机械判定`,
+      reason: `命中${hits.join('、')}，但 then 中没有任何可测量锚点（数值+单位 / 具体文案 / HTTP 状态码 / 状态名 / 错误码 / 布尔断言 / 顺序·集合类 / 枚举映射 / 文件路径 / 标识符与命令），无法被机械判定`,
     };
   }
   return { hit: false, reason: null };

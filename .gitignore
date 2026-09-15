@@ -3,6 +3,9 @@ node_modules/
 
 # specgate 运行时产物（lint/plan/draft 在「用户工作目录」生成的输出，非源码）
 # ⚠️ 用根级限定（/ 开头），避免误伤 templates/draft.prompt.md 等模板文件
+# review 产物已改名为 <契约名>.review.md（改动8·T7），故用通配后缀匹配；
+# 旧的裸 review.md 一并保留，兼容历史遗留产物。
+*.review.md
 review.md
 contract.draft.yaml
 /draft.prompt.md

@@ -393,3 +393,265 @@ test('桥接：runBridge 产出通过结构校验的契约（可进 lint）', ()
   rm2(tmp, { recursive: true, force: true });
 });
 
+// ============================================================================
+// 二轮改动防回归
+//   T1 桥接续行 / T2 锚点扩充+反引号防伪装 / T3 恒真断言 /
+//   T4 ⑪ verify 分布 / T5 约束逐级查找+降级 / T6 --keep-verify / T7 ⑦放宽
+// ============================================================================
+import { spawnSync } from 'node:child_process';
+import { mkdirSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { TAUTOLOGY_PATTERNS } from '../src/words.js';
+
+// ---- T1 改动 1：THEN 之后的枚举续行不得在解析期丢失 -----------------------
+test('T1·桥接保留 THEN 后的枚举续行（锚点不再于解析期消失）', () => {
+  const spec = `
+## ADDED Requirements
+
+### Requirement: Exit Codes
+The CLI SHALL return documented exit codes.
+
+#### Scenario: Success
+- **WHEN** the command succeeds
+- **THEN** it exits with codes
+  - 0: Success
+  - 1: Failure
+`;
+  const { requirements } = parseSpec(spec);
+  const bullets = requirements[0].scenarios[0].bullets;
+  assert.equal(bullets.length, 2, '续行不应新增 bullet');
+  const last = bullets[bullets.length - 1];
+  assert.equal(last.kind, 'THEN');
+  assert.match(last.text, /0: Success/, '枚举续行应拼接到 THEN');
+  assert.match(last.text, /1: Failure/);
+
+  const c = buildContract(spec, { fileStem: 'exit' });
+  assert.match(c.accept[0].then, /0: Success/);
+  assert.equal(checkWording(c.accept[0].then).hit, false, '带枚举锚点的 then 不应被判不可判定');
+});
+
+// ---- T2 改动 2/3：锚点扩充 + 反引号防伪装 ---------------------------------
+test('T2a·枚举映射锚点：真枚举算锚点，给废话编号不算', () => {
+  assert.equal(checkWording('响应要快，返回码 0: Success').hit, false, '"0: Success" 应算锚点');
+  assert.equal(checkWording('响应要快，返回码 1) NotFound').hit, false, '"1) NotFound" 应算锚点');
+  assert.equal(checkWording('返回 1: 体验良好').hit, true, '"1: 体验良好" 是给废话编号，不算锚点');
+});
+
+test('T2a·文件路径与 code 词锚点', () => {
+  assert.equal(checkWording('配置写入 config/app.yaml 后界面要清晰').hit, false, '带扩展名路径应算锚点');
+  assert.equal(checkWording('按 exit code 处理，界面要清晰').hit, false, '"exit code" 应算锚点');
+  assert.equal(checkWording('按 status codes 处理，界面要清晰').hit, false, '"status codes" 应算锚点');
+});
+
+test('T2b·反引号锚点：真标识符救回主观词，纯主观词反引号仍拦', () => {
+  // 含主观词「友好」，但 `getUserList()` 是真标识符 → 放行
+  assert.equal(
+    checkWording('调用 `getUserList()` 后返回结果要友好').hit, false,
+    '`getUserList()` 应作为锚点救回含主观词的 then',
+  );
+  // `友好` 是中文主观词 → 不算锚点（防伪装）
+  assert.equal(checkWording('界面要 `友好`').hit, true, '`友好` 不得被当作锚点');
+  // `fast` 全落在 SUBJECTIVE_EN → 不算锚点
+  assert.equal(checkWording('响应要 `fast`').hit, true, '`fast` 不得被当作锚点');
+  // 命令形态（真实用例）
+  assert.equal(checkWording('执行 `/opsx:continue <name>` 后列表要清晰').hit, false, '真命令应算锚点');
+});
+
+// ---- T3 改动 4/5：恒真断言同层拦截，且不得误伤「而非空列表」 -------------
+test('T3·恒真断言被拦下（与主观词同层、同受锚点门控）', () => {
+  const tautologies = [
+    '删除结果是数字类型且不报错',
+    '返回结果为字符串类型',
+    '处理达到预期',
+    '接口调用成功即可',
+    '页面渲染正确无误',
+  ];
+  for (const t of tautologies) {
+    assert.equal(checkWording(t).hit, true, `恒真断言应被拦下：${t}`);
+  }
+});
+
+test('T3·守门：绝不能加 /[不非]空/，不得误伤「而非空列表」', () => {
+  assert.equal(
+    checkWording('删除一项后剩余数量等于原数量减一，而非空列表').hit, false,
+    '「而非空列表」是可机械判定的布尔断言，不得误伤',
+  );
+  // 顺带确认「非空」系列词没有渗进判据一的恒真模式表
+  for (const re of TAUTOLOGY_PATTERNS) {
+    assert.ok(!/[不非]空/.test(re.source), `TAUTOLOGY_PATTERNS 不得含 [不非]空：${re.source}`);
+  }
+});
+
+// ---- T4 改动 11：⑪ verify 分布（只提醒，不改退出码） ---------------------
+test('T4·⑪ verify 分布：inferred 占比与 ui-mismatch 只提醒、不影响通过', () => {
+  const doc = parse(`contract: c
+intent: x
+accept:
+  - id: A1
+    given: g
+    when: w
+    then: 页面展示列表
+    verify: unit
+    verify_source: inferred
+  - id: A2
+    given: g
+    when: w
+    then: 点击按钮后状态切换
+    verify: trace
+    verify_source: explicit
+out_of_scope: [a]
+`);
+  const r = runLint(doc, C);
+  const c11 = r.warnings.find((w) => w.id === '⑪');
+  assert.ok(c11, '⑪ 应挂在 warnings 上');
+  assert.ok(c11.items.some((i) => i.kind === 'inferred-ratio'), 'inferred 占比应产出一条');
+  assert.ok(
+    c11.items.some((i) => i.kind === 'ui-mismatch' && i.acceptId === 'A1'),
+    'A1 措辞是 UI 但 verify=unit，应提示 ui-mismatch',
+  );
+  assert.ok(
+    !c11.items.some((i) => i.kind === 'ui-mismatch' && i.acceptId === 'A2'),
+    'A2 是 trace 配 UI 措辞，不得误报',
+  );
+  assert.equal(r.passed, true, '⑪ 不得影响退出码');
+  assert.ok(!r.issues.some((i) => i.checkId === '⑪'), '⑪ 不得进 issues/blocking');
+});
+
+// ---- T5 改动 6/7/8：约束逐级查找、降级原因、review 落盘 -------------------
+test('T5·loadConstraints 逐级向上查找，解析失败带 parse-failed + path', () => {
+  const root = mkdtempSync(join(tmpdir(), 'sg-cons-'));
+  const repo = join(root, 'repo');
+  const nested = join(repo, 'a', 'b');
+  mkdirSync(nested, { recursive: true });
+  mkdirSync(join(repo, '.git'), { recursive: true });
+  writeFileSync(join(repo, 'constraints.yaml'), 'verify_tools:\n  mytool:\n    note: 自定义\n');
+
+  // 契约在深层子目录 → 逐级向上命中仓库根的 constraints.yaml
+  const hit = loadConstraints(join(nested, 'contract.yaml'));
+  assert.equal(hit.source, 'project', '应向上找到项目约束');
+  assert.equal(hit.path, join(repo, 'constraints.yaml'));
+  assert.ok('mytool' in hit.verify_tools, '应采用项目自定义 verify 清单');
+
+  // 解析失败 → 带 reason: parse-failed + path 返回（不再静默）
+  writeFileSync(join(repo, 'constraints.yaml'), 'verify_tools:\n  bad: [1, 2\n');
+  const bad = loadConstraints(join(nested, 'contract.yaml'));
+  assert.equal(bad.source, 'builtin');
+  assert.equal(bad.reason, 'parse-failed');
+  assert.equal(bad.path, join(repo, 'constraints.yaml'));
+
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('T5b·CLI：builtin 降级向 stderr 告警，review 按契约名落盘且互不覆盖', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'sg-cli-'));
+  const body = (name) => `contract: ${name}
+intent: 测试
+accept:
+  - id: A1
+    given: 用户已登录
+    when: 打开页面
+    then: 列表按创建时间倒序排列
+    verify: trace
+out_of_scope:
+  - 不含支付
+`;
+  const alpha = join(tmp, 'alpha.yaml');
+  const beta = join(tmp, 'beta.yaml');
+  writeFileSync(alpha, body('alpha'));
+  writeFileSync(beta, body('beta'));
+
+  const cli = resolve('src/cli.js');
+  const r = spawnSync(process.execPath, [cli, 'lint', alpha], { cwd: tmp, encoding: 'utf8' });
+  assert.equal(r.status, 0, '契约应通过（退出码 0）');
+  assert.match(r.stderr, /约束降级/, 'builtin 降级必须向 stderr 告警');
+  assert.match(r.stderr, /未找到 constraints\.yaml/, '应区分降级原因 not-found');
+  assert.ok(!/约束降级/.test(r.stdout), '告警不得污染 stdout');
+  assert.ok(existsSync(join(tmp, 'alpha.review.md')), 'review 应写成 <契约名>.review.md');
+  assert.ok(!existsSync(join(tmp, 'review.md')), '不得再写固定名 review.md');
+  assert.match(readFileSync(join(tmp, 'alpha.review.md'), 'utf8'), /约束降级/, 'review 顶部应有降级横幅');
+
+  // 同一目录下第二份契约不覆盖第一份
+  const r2 = spawnSync(process.execPath, [cli, 'lint', beta], { cwd: tmp, encoding: 'utf8' });
+  assert.equal(r2.status, 0);
+  assert.ok(
+    existsSync(join(tmp, 'alpha.review.md')) && existsSync(join(tmp, 'beta.review.md')),
+    '两份契约的 review 应互不覆盖',
+  );
+
+  rmSync(tmp, { recursive: true, force: true });
+});
+
+// ---- T6 改动 9：--keep-verify 只保留人工改过的 verify ---------------------
+const SPEC_SMALL = `
+## ADDED Requirements
+
+### Requirement: User Login
+The system SHALL let a user log in via the REST API.
+
+#### Scenario: Success
+- **WHEN** a user submits valid credentials to the login endpoint
+- **THEN** the API returns HTTP 200
+
+#### Scenario: Failure
+- **WHEN** the password is wrong
+- **THEN** the API returns HTTP 401
+`;
+
+test('T6·--keep-verify 只保留人工改过的 verify，其余标 inferred（幂等）', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'sg-keep-'));
+  const specPath = join(tmp, 'spec.md');
+  const outPath = join(tmp, 'contract.yaml');
+  writeFileSync(specPath, SPEC_SMALL);
+
+  // 首次：全机器推断
+  const r1 = runBridge(specPath, outPath);
+  const c1 = parse(readFileSync(outPath, 'utf8'));
+  assert.equal(r1.kept, 0);
+  assert.equal(c1.accept[0].verify, 'contract-test', '机器推断应为 contract-test');
+  assert.ok(c1.accept.every((a) => a.verify_source === 'inferred'), '首次应全标 inferred');
+
+  // 人工把第 1 条改成 manual（与机器推断不同 = 人工修正）
+  c1.accept[0].verify = 'manual';
+  writeFileSync(outPath, stringify(c1, { lineWidth: 0 }), 'utf8');
+
+  // 带 --keep-verify 重跑
+  const r2 = runBridge(specPath, outPath, { keepVerify: true });
+  const c2 = parse(readFileSync(outPath, 'utf8'));
+  assert.equal(r2.kept, 1, '应报告保留 1 条人工修正');
+  assert.equal(c2.accept[0].verify, 'manual', '人工改过的 verify 应被保留');
+  assert.equal(c2.accept[0].verify_source, 'explicit');
+  assert.ok(c2.accept.slice(1).every((a) => a.verify_source === 'inferred'), '未改的仍走机器推断');
+
+  // 幂等：再跑一次结果不变
+  const r3 = runBridge(specPath, outPath, { keepVerify: true });
+  const c3 = parse(readFileSync(outPath, 'utf8'));
+  assert.equal(r3.kept, 1, '幂等：重复跑不改变结果');
+  assert.equal(c3.accept[0].verify, 'manual');
+  assert.equal(c3.accept[1].verify, 'contract-test');
+
+  rmSync(tmp, { recursive: true, force: true });
+});
+
+// ---- T7 改动 10：计算类 THEN 自带蜕变关系即满足⑦ -------------------------
+test('T7·计算类 THEN 自带蜕变关系即满足⑦，普通断言仍被拦', () => {
+  const doc = parse(`contract: c
+intent: x
+accept:
+  - id: A1
+    given: g
+    when: w
+    then: 新增一件商品后，总价严格增加
+    verify: unit
+  - id: A2
+    given: g
+    when: w
+    then: 总价等于 100 元
+    verify: unit
+out_of_scope: [a]
+`);
+  const c7 = runLint(doc, C).blocking.find((c) => c.id === '⑦');
+  assert.ok(c7, '⑦ 应在阻塞项里');
+  assert.ok(!c7.items.some((i) => i.acceptId === 'A1'), 'A1 的 THEN 已是有效蜕变关系，不应被⑦拦');
+  assert.ok(c7.items.some((i) => i.acceptId === 'A2'), 'A2 是计算类普通断言，仍应被⑦拦');
+});
+

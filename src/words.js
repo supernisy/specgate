@@ -71,6 +71,19 @@ export const TAUTOLOGY_WORDS = [
 // 这两个裸词若被「不/没」否定则不是恒真（如「不存在」「没值」），见 NOTES.md
 export const TAUTOLOGY_NEGATABLE = ['存在', '有值'];
 
+// ---- 恒真断言模式（新增·只增不改；用于判据一的「与主观词同层」检测） --------
+//   放在输出侧 = 写成测试后永远通过，等于没测。
+//   ⚠️ 绝不要加 /[不非]空/ —— 曾误伤「…而非空列表」这类可机械判定的布尔断言。
+export const TAUTOLOGY_PATTERNS = [
+  /(不|无|没)(会|出现)?(报错|出错|抛错|异常)/,
+  /(?:是|为|返回)\s*(?:数字|字符串|布尔|对象|数组)\s*(?:类型|值)/,
+  /类型(?:正确|符合)/,
+  /达到预期/,
+  /(?:成功|正常|有值|存在|可用|有效)即可/,
+  /正确无误|一切正常|没问题/,
+  /\b(?:does\s*not\s+throw|returns?\s+successfully|is\s+(?:a\s+)?number|is\s+(?:truthy|defined|non-?empty)|behaves?\s+as\s+expected|works?\s+fine)\b/i,
+];
+
 // ---- §4.10 计算/聚合语义强制要求 invariants 的判定正则 ----------------------
 export const COMPUTE_REGEX =
   /总数|数量|总价|金额|求和|之和|平均|统计|计数|聚合|排序|分页|条数|占比|百分比|计算|累计|余额|折扣|优惠/;

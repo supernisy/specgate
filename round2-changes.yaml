@@ -1,0 +1,92 @@
+# specgate 自检契约：二轮改造（11 组改动）
+# 用途：用 specgate 自己的门禁审「本次改造算不算完成」。
+# 每条 then 都必须可机械判定；执行验证层 = test/spec.test.mjs（37 条用例）。
+
+contract: round2-changes
+intent: |
+  把 specgate 按下述 11 组改动改好，并用给定基线自证无回归。纯本地改造。
+  三条不可破立场：(1) lint 纯确定性、零模型、零网络；(2) 误报比漏报更糟，
+  新判据一律挂「有锚点即放行」；(3) 绝不改写 words.js 既有词表，只新增常量。
+
+accept:
+  - id: A1
+    given: test/samples/openspec-spec.md 中存在 THEN 之后跟缩进枚举子列表的场景
+    when: 运行 specgate bridge test/samples/openspec-spec.md
+    then: "输出契约中该条目的 then 文本包含 0: Success 与 1: NotFound 两段枚举映射"
+    verify: unit
+
+  - id: A2
+    given: 四条 then 分别只含枚举映射、带扩展名文件路径、英文 code 词、反引号标识符
+    when: 对四条分别执行判据一
+    then: 四条结果均为 hit 等于 false，且不产生任何 hits 数组元素
+    verify: unit
+
+  - id: A3
+    given: then 写成反引号包裹的主观词，如反引号友好或反引号 fast，且无其他锚点
+    when: 对该条执行判据一
+    then: 仍被拦下，返回 hit 等于 true，理由字段包含主观词或恒真断言字样
+    verify: unit
+
+  - id: A4
+    given: then 写成恒真断言，如不报错、是数字类型、到达预期三种说法之一
+    when: 对该条执行判据一
+    then: 返回 hit 等于 true，理由字段包含恒真断言标记与命中原句
+    verify: unit
+
+  - id: A5
+    given: 同一条 then 既命中恒真断言又带可测量锚点
+    when: 对该条执行判据一
+    then: 该条门的判定结果与词表层完全一致，即 hit 等于 false
+    verify: unit
+
+  - id: A6
+    given: 契约放在仓库子目录里，仓库根存在 constraints.yaml
+    when: 只给契约路径执行 lint，工作目录与仓库根不同
+    then: 仍能找到仓库根的 constraints.yaml，且约束来源 source 等于 project
+    verify: unit
+
+  - id: A7
+    given: 仓库根没有 constraints.yaml，只能回退内置约束
+    when: 执行 lint 一条合法契约
+    then: 降级时 stderr 出现 builtin 告警字样，且 review 文件顶部含降级横幅，退出码等于 0
+    verify: unit
+
+  - id: A8
+    given: 同目录已存在 login-pass.review.md 且内容非空
+    when: 对 login-pass.yaml 执行 lint 并落盘 review
+    then: review 文件名为 login-pass.review.md 而非 review.md，原同名文件内容不被覆盖，且不通过时退出码等于 2
+    verify: unit
+
+  - id: A9
+    given: 上轮 bridge 产物中某条 verify 被人工改成 contract-test
+    when: 重跑 bridge 带 --keep-verify
+    then: 该条 verify 保持 contract-test 不变并标为 explicit，其余标为 inferred；连续重跑 2 次输出逐字相同
+    verify: unit
+
+  - id: A10
+    given: 计算类条目的 then 本身已是有效蜕变关系，且未显式写 invariants
+    when: 执行检查⑦
+    then: 该条放行，检查⑦通过且阻塞项保持 0 项，退出码等于 0
+    verify: unit
+
+  - id: A11
+    given: 契约由 bridge 生成，存在 verify_source 为 inferred 的条目
+    when: 执行 lint 并渲染 review
+    then: 报告仅新增一行 verify 分布提示，退出码等于 0 且阻塞项保持 0 项
+    verify: unit
+
+uses:
+  components: []
+  api: []
+  tokens: []
+
+breaks:
+  - what: review 输出文件名从 review.md 改为 契约名.review.md
+    why:  多条契约同目录时旧命名会互相覆盖，且分不清产物属于哪条契约（改动8·T7）
+    approved: true
+
+out_of_scope:
+  - 不改写 words.js 既有词表（SUBJECTIVE_ZH / SUBJECTIVE_EN / COMPOSITE_PATTERNS 一字不动）
+  - 不引入任何模型调用或网络请求（lint 必须零依赖外部）
+  - 不新增第 12 项检查，也不改既有十一项的阻塞/提醒划分（除⑦放宽）
+  - 不改 bridge 的 verify 关键词推断规则本身

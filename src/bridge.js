@@ -5,8 +5,8 @@
 //   9 个合法取值里推断；suspect 不填（确定性桥接无法判断「能否写断言」，
 //   交还 draft 阶段的 AI 标注，符合「只加严不放宽」）。
 // ============================================================================
-import { stringify } from 'yaml';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { stringify, parse } from 'yaml';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve, basename } from 'node:path';
 
 // 合法 verify 取值（与 constraints.yaml 保持一致；这里只作启发式回退默认值）
@@ -113,6 +113,15 @@ export function parseSpec(md) {
       else if (cur) cur.desc = cur.desc ? cur.desc + '\n' + b.text : b.text;
       continue;
     }
+    // 场景续行（改动 1）：THEN/WHEN 之后缩进的枚举子列表，拼接到上一个 bullet。
+    //   丢弃会让锚点（如「0: Success」）在解析期就消失，
+    //   于是 lint 把本可判定的 then 误报成不可判定。
+    if (curScenario && curScenario.bullets.length > 0 && line.trim() && !/^#/.test(line)) {
+      const last = curScenario.bullets[curScenario.bullets.length - 1];
+      const cont = line.replace(/^\s*[-*]\s*/, '').trim();
+      last.text = `${last.text} ${cont}`.trim();
+      continue;
+    }
     // 普通段落：归入当前 requirement 描述（在场景之前）
     if (cur && !curScenario && line.trim() && !/^#/.test(line)) {
       cur.desc = cur.desc ? cur.desc + '\n' + line.trim() : line.trim();
@@ -177,14 +186,46 @@ export function buildContract(md, opts = {}) {
   return contract;
 }
 
-export function runBridge(specPath, outPath) {
+export function runBridge(specPath, outPath, opts = {}) {
   const md = readFileSync(specPath, 'utf8');
   const stem = basename(specPath).replace(/\.md$/i, '');
   const contract = buildContract(md, { fileStem: stem });
-  const yaml = stringify(contract, { lineWidth: 0 });
-  if (outPath) {
-    writeFileSync(resolve(outPath), yaml, 'utf8');
-    return { ok: true, yaml, outPath: resolve(outPath), count: contract.accept.length };
+
+  // 改动 9·T6 --keep-verify：保留「人工改过」的 verify，其余走机器推断（保持幂等）
+  let kept = 0;
+  const resolvedOut = outPath ? resolve(outPath) : null;
+  if (opts.keepVerify && resolvedOut && existsSync(resolvedOut)) {
+    let prev = null;
+    try {
+      prev = parse(readFileSync(resolvedOut, 'utf8'));
+    } catch {
+      prev = null; // 旧文件读不动 → 退化为全机器推断，不阻断
+    }
+    const prevById = new Map();
+    if (prev && Array.isArray(prev.accept)) {
+      for (const a of prev.accept) {
+        if (a && a.id != null) prevById.set(a.id, a.verify);
+      }
+    }
+    for (const a of contract.accept) {
+      const oldVerify = prevById.get(a.id);
+      // 只认「人改过」的：旧值与本次机器推断值不同，才判为人工修正
+      if (oldVerify != null && oldVerify !== a.verify) {
+        a.verify = oldVerify;
+        a.verify_source = 'explicit';
+        kept += 1;
+      }
+    }
   }
-  return { ok: true, yaml, count: contract.accept.length };
+  // 未被标 explicit 的一律标 inferred
+  for (const a of contract.accept) {
+    if (!a.verify_source) a.verify_source = 'inferred';
+  }
+
+  const yaml = stringify(contract, { lineWidth: 0 });
+  if (resolvedOut) {
+    writeFileSync(resolvedOut, yaml, 'utf8');
+    return { ok: true, yaml, outPath: resolvedOut, count: contract.accept.length, kept };
+  }
+  return { ok: true, yaml, count: contract.accept.length, kept };
 }

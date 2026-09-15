@@ -25,35 +25,53 @@ const BUILTIN = {
   manual_max_ratio: 0.2,
 };
 
-// 在契约文件所在目录与 cwd 寻找 constraints.yaml
+// 从 startDir 逐级向上收集 constraints.yaml 候选路径
+//   停止边界：含 .git 的目录（仓库根，不再往外找）；最多向上 12 级
+function collectUpwardCandidates(startDir) {
+  const out = [];
+  let dir = resolve(startDir);
+  for (let i = 0; i < 12; i += 1) {
+    out.push(resolve(dir, 'constraints.yaml'));
+    if (existsSync(resolve(dir, '.git'))) break; // 仓库边界
+    const parent = dirname(dir);
+    if (parent === dir) break; // 已到盘符根
+    dir = parent;
+  }
+  return out;
+}
+
+// 在契约文件所在目录（逐级向上）与 cwd 寻找 constraints.yaml
+//   两条降级路径都带 reason 返回（供上层显式告警，不再静默）
 export function loadConstraints(inputPath) {
   const candidates = [];
   if (inputPath) {
-    candidates.push(resolve(dirname(inputPath), 'constraints.yaml'));
+    candidates.push(...collectUpwardCandidates(dirname(resolve(inputPath))));
   }
   candidates.push(resolve(process.cwd(), 'constraints.yaml'));
 
+  const seen = new Set();
   for (const p of candidates) {
-    if (existsSync(p)) {
-      try {
-        const doc = parse(readFileSync(p, 'utf8')) || {};
-        const tools = doc.verify_tools || {};
-        const maxRatio = (doc.manual && typeof doc.manual === 'object' && doc.manual.max_ratio != null)
-          ? doc.manual.max_ratio
-          : (tools.manual && tools.manual.max_ratio != null ? tools.manual.max_ratio : BUILTIN.manual_max_ratio);
-        return {
-          source: 'project',
-          verify_tools: tools,
-          manual_max_ratio: maxRatio,
-          path: p,
-        };
-      } catch {
-        // 解析失败则回退内置默认
-        break;
-      }
+    if (seen.has(p)) continue;
+    seen.add(p);
+    if (!existsSync(p)) continue;
+    try {
+      const doc = parse(readFileSync(p, 'utf8')) || {};
+      const tools = doc.verify_tools || {};
+      const maxRatio = (doc.manual && typeof doc.manual === 'object' && doc.manual.max_ratio != null)
+        ? doc.manual.max_ratio
+        : (tools.manual && tools.manual.max_ratio != null ? tools.manual.max_ratio : BUILTIN.manual_max_ratio);
+      return {
+        source: 'project',
+        verify_tools: tools,
+        manual_max_ratio: maxRatio,
+        path: p,
+      };
+    } catch {
+      // 找到了文件但解析失败：停下并带上原因，交给上层告警
+      return { ...BUILTIN, reason: 'parse-failed', path: p };
     }
   }
-  return BUILTIN;
+  return { ...BUILTIN, reason: 'not-found' };
 }
 
 export function verifyKeys(constraints) {

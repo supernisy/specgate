@@ -6,13 +6,40 @@
 
 ---
 
+## 定位：一个 lint 检查内核 + 两个互斥前门
+
+specgate 的内核只有一个：**`lint`** —— 判定契约里每条验收条件能不能被机械判定。
+
+喂给这个内核的契约有两条来路，**互斥**：同一份需求只能走其中一条。
+
+| 你的情况 | 前门 | 契约怎么来 |
+|---|---|---|
+| 手里只有需求文字 / 需求文档（没用 OpenSpec） | **`draft`** | 起草出模板 + 提示词，AI 按提示逐条填 |
+| 已经在用 OpenSpec（`spec.md` 已在） | **`bridge`** | 确定性解析 `spec.md`，一条命令转成契约 |
+
+> ⚠️ **有 OpenSpec 时，`spec.md` 就是唯一需求事实源，禁止再用 `draft` 另建一份契约需求源。**
+> 两份需求源并存，必然出现「改了 spec 忘了改契约」的漂移，门禁到底把的是哪一份也说不清。
+
+**边界（别指望它做分外事）**：
+
+- specgate **只登记并校验 `verify` 的名称**（这个取值在不在清单里），**不执行任何验证工具**；
+- 也**不替代**实现完成后的 `/opsx:verify` —— 那是「实现 vs 规格」的还原度验证，属另一环
+  （该斜杠命令属 OpenSpec **扩展 profile**，默认 profile 不含，需 `openspec config profile` 启用）；
+- specgate 管的是**写代码之前**：这条验收条件，机器到底验不验得了。
+
+> 📌 **三个「验证」别混成一件事**（详见 §2.4 末尾）：
+> `openspec validate` 验**格式/结构** → specgate `lint` 验**可判定性** → **跑测试**是 `contract-test`/`unit`/`unit-visual`/`trace`。
+> 三层各管一段，specgate 只占中间那层。
+
+---
+
 ## 0. 这份文档给谁看
 
 - **需求方 / 产品**：不读代码，但要把「要什么」说清楚。
 - **实现开发者**：拿到一份机器能验的契约，去写代码、写测试。
 - **评审者**：用 `lint` 的输出判断这份契约「够不够格进实现」。
 
-你不需要先理解算法。照着第 3 节的 6 步走，就能跑通整个流程。
+你不需要先理解算法。照着第 3 节走，就能跑通整个流程。
 
 ---
 
@@ -48,25 +75,28 @@ specgate 在**写代码之前**就把这类条件拦下来，逼需求方改成�
 | ② | **误报比漏报严重** | 宁可少拦，勿误报。判定不可判定 = 命中主观词 **且** 无可测量锚点（带上下文排除兜底）。 |
 | ③ | **工具不替人决策** | 把「该不该破例」变成需人签字的条目（`breaks.approved` / `assumed_output`）。 |
 
-### 2.2 数据流：三阶段门禁
+### 2.2 数据流：两个前门 → 一个内核 → 两个任务包
 
 ```mermaid
 flowchart TD
-    A[需求.md<br/>需求方原话] -->|specgate draft| B[contract.draft.yaml<br/>+ draft.prompt.md]
-    B -->|在当前会话让 AI 填空| C[contract.yaml<br/>人审 + 机消费]
-    C -->|specgate lint| D{十项检查}
-    D -->|通过 退出码 0| E[review.md<br/>通过摘要]
-    D -->|不通过 退出码 2| F[review.md<br/>需要修改 + 需要决策]
+    A1[需求.md<br/>需求方原话] -->|specgate draft| B1[contract.draft.yaml<br/>+ draft.prompt.md]
+    B1 -->|在当前会话让 AI 填空| C[contract.yaml<br/>人审 + 机消费]
+    A2[spec.md<br/>OpenSpec 唯一需求事实源] -->|specgate bridge| C
+    C -->|specgate lint| D{十一项检查}
+    D -->|通过 退出码 0| E[契约名.review.md<br/>通过摘要]
+    D -->|不通过 退出码 2| F[契约名.review.md<br/>需要修改 + 需要决策]
     F -->|人修正契约| C
     E -->|specgate plan| G[impl-task/  test-task/<br/>物理隔离两包]
     G -->|隔离自检通过| H[实现方写代码 · 测试方写验收]
 ```
 
-- **draft**：给空白契约 + 填写提示词（不调模型，提示词交给你的 AI 会话去填）。
-- **lint**：十项检查，产出 `review.md`（人读）并给退出码（机器读）。
+- **两个前门（互斥，二选一）**：
+  - **draft**：给空白契约 + 填写提示词（不调模型，提示词交给你的 AI 会话去填）——**没在用 OpenSpec 时**走这条。
+  - **bridge**：把 OpenSpec 的 `spec.md` 确定性解析成契约——**已在用 OpenSpec 时**走这条，且**不要再跑 draft**。
+- **lint**（内核）：十一项检查，产出 `<契约名>.review.md`（人读）并给退出码（机器读）。
 - **plan**：把契约拆成「实现方包」和「测试方包」两个**物理隔离**的目录，并做隔离自检。
 
-### 2.3 十项检查与三层分层
+### 2.3 十一项检查与三层分层
 
 检查按**「判定确定性程度」**分三层（不是按重要程度）：
 
@@ -78,48 +108,81 @@ flowchart TD
 | ④ | breaks 已批准（approved 三值校验） | 阻塞 | ✔ |
 | ⑤ | manual 占比 ≤ 20% | 阻塞 | ✔ |
 | ⑥ | invariants 有效（判据二） | 阻塞 | ✔ |
-| ⑦ | 计算类条目必须有不变量 | 阻塞 | ✔ |
+| ⑦ | 计算类条目必须有不变量（THEN 本身已是有效蜕变关系也算满足） | 阻塞 | ✔ |
 | ⑧ | 期望值已确认（assumed_output 归「决策」非「修改」） | 阻塞 | ✔ |
 | ⑨ | 能力边界（when+then 拼接匹配） | 提醒 | ✘ |
 | ⑩ | 接口状态覆盖（uses.api 非空才查） | 提醒 | ✘ |
+| ⑪ | verify 分布（推断占比 / UI 措辞配错手段） | 提醒 | ✘ |
 
-> ⑨⑩ 是「人比机器更懂」的部分（某些交互能力 / 接口异常态只有作者清楚），所以**只提醒、不阻塞**——
-> 工具诚实地把判断权交还给人。
+> ⑨⑩⑪ 是「人比机器更懂」的部分（某些交互能力、接口异常态、手段选得合不合适，只有作者清楚），
+> 所以**只提醒、不阻塞**——工具诚实地把判断权交还给人。
+>
+> ⑦ 的放宽是刻意的：走 `bridge` 时 `spec.md` 是唯一事实源，不该逼你把不变量再抄进这份派生契约；
+> 但「THEN 得真的是有效蜕变关系」这条不能松，所以只在它成立时才放行。
 
 ### 2.4 两个核心判据（算法直觉）
 
 **判据一 · 措辞可判定性（检查③，两级化）**
-最终拦下 = `（suspect: true 且无锚点）` **或** `（命中主观词表 且无锚点）`。
+最终拦下 = `（suspect: true 且无锚点）` **或** `（命中主观词 / 复合表述 / 恒真断言 且无锚点）`。
 
 - **第一级 `suspect`**（起草时由 AI 标注）：AI 逐条判断「测试方能不能据此写出断言」，不能→`suspect: true`，能→`suspect: false`。**lint 只读不判、不调模型**；同一份契约跑一百次输出完全相同。关键是**单向权力**：`suspect: true` 让门禁更严（兜住词表漏掉的说法），`suspect: false` 不放行任何东西（词表层照常跑），未声明则与改动前完全一致。
-- **第二级词表层**：原有兜底层（如「友好 / 稳定 / 流畅 / 美观」），不可关闭。
-- **锚点补全优先级高于主观词表**（误报会摧毁信任）：本次补了中文直角引号「」『』、布尔词（重定向到/移除/加入/包含于/位于）、顺序·集合类（倒序/升序/降序/排序/置顶/置底/去重）。带**上下文排除**避免误报：像「快照在 200ms 内」「清晰度不低于 90%」「正常流程返回 200」这类虽含敏感词但有锚点 / 属正常态，一律放行。
+- **第二级词表层**：原有兜底层，不可关闭。共三类信号——**主观词**（中/英，如「友好 / 稳定 / 流畅 / 美观」）、**复合表述**（「性能好 / 再快一点」）、**恒真断言**（「不报错 / 是数字类型 / 到达预期 / 正确无误」，写成测试永远通过，等于没测）。
+- **锚点补全优先级高于主观词表**（误报会摧毁信任）：已补中文直角引号「」『』、布尔词（重定向到/移除/加入/包含于/位于）、顺序·集合类（倒序/升序/降序/排序/置顶/置底/去重）。带**上下文排除**避免误报：像「快照在 200ms 内」「清晰度不低于 90%」「正常流程返回 200」这类虽含敏感词但有锚点 / 属正常态，一律放行。
+- **锚点表又补了四类**（锚点漏一种 = 误伤一种）：**枚举映射**（`0: Success` 算；`1: 体验良好` 这种给废话编号的不算）、**带扩展名的文件路径**（`config/app.yaml`）、**英文 code 词**（`exit / status / error codes`）、**反引号标识符与命令**（`` `getUserList()` ``、`` `/opsx:continue <name>` `` 算；`` `友好` ``、`` `fast` `` 这类伪装不算）。
+- **恒真断言不单独设门控**：它和主观词走同一个 `anchor` 判断，命中且有锚点照样放行——绝不新开一条会更严的路径。
 
 **判据二 · 蜕变关系有效性（检查⑥）**
 计算 / 聚合类条目必须写清「输入变了，输出该怎么变」。算法：在**变动词**
 （新增 / 删除 / 扩大 / 打乱 / 交换…）之后看 `tail`，**遍历所有切分点**，存在一种切法成立即通过。
 若把**恒真词**（是数字 / 不为空 / 不报错…）放在输出侧，等于废话 → **阻塞**，并给出五类句式供照抄。
 
+**三个「验证」别混成一件事**
+
+| 层 | 谁在管 | 管什么 | 会不会跑代码 |
+|---|---|---|---|
+| ① 结构验证 | OpenSpec CLI `openspec validate [--strict]` | `Requirement`/`Scenario` 写全没有、格式合规 | 不会 |
+| ② 可判定性门禁 | specgate `lint` | 这条 `then` 能不能被机械断言（有锚点才放行） | 不会 |
+| ③ 执行验证 | `contract-test` / `unit` / `unit-visual` / `trace` | 真跑测试、比对结果 | **会** |
+
+> specgate **只占第②层**，外加**登记第③层的 `verify` 名字**（校验取值在不在 `constraints.yaml` 清单里）。
+> 它**不执行**任何验证工具，也**不替代** OpenSpec 的 `/opsx:verify`——后者是 AI 扫代码库做「实现 vs 规格」的
+> 还原度核查（输出 CRITICAL/WARNING/SUGGESTION，不阻塞 archive），属**扩展 profile**，默认 profile 不含。
+
 ### 2.5 模块职责（实现者视角）
 
 ```
-src/cli.js            位置参数分发 + 退出码 0/2/1
-src/checks.js         十项检查编排 + 三层划分 + 终端/review.md 渲染（含 validateStructure）
-src/constraints.js    verify_tools 加载（builtin 兜底，标 builtin；源码不硬编码枚举）
-src/criteria/wording.js   判据一
+src/cli.js            位置参数分发 + 退出码 0/2/1 + 约束降级告警 + review 落盘
+src/checks.js         十一项检查编排 + 三层划分 + 终端/review 渲染（含 validateStructure）
+src/constraints.js    verify_tools 加载（从契约目录逐级向上找；builtin 兜底并带降级原因）
+src/criteria/wording.js   判据一（主观词 + 复合表述 + 恒真断言，同受锚点门控）
 src/criteria/invariant.js 判据二 + 能力边界 + 状态覆盖
+src/bridge.js         前门②：OpenSpec spec.md → contract.yaml（确定性解析，支持 --keep-verify）
 src/suggestions.js    verify→建议映射（§5.2，绝不自动应用）
-src/draft.js          模板 + 提示词生成
+src/draft.js          前门①：模板 + 提示词生成
 src/plan.js           两任务包 + 隔离自检
-src/words.js          主观词表 / 变动词 / 关系词 / 恒真词 / verify→建议映射表（全部原样写死）
+src/words.js          主观词表 / 变动词 / 关系词 / 恒真词 / 恒真断言模式 / verify→建议映射表
 templates/            契约模板、draft/test 提示词、verify-tools 说明
 ```
 
 ---
 
-## 3. 从需求到交付：完整工作流（6 步）
+## 3. 从需求到交付：完整工作流
 
 > 以「做一个登录功能」为例。所有命令在 `specgate/` 目录下运行，Node 22+。
+
+### 先选前门（二选一，别都走）
+
+| 你的情况 | 走哪条 | 从哪开始 |
+|---|---|---|
+| 需求只在文档 / 对话里，没在用 OpenSpec | **路线 A · draft** | 下面的 Step 1 |
+| 已经在用 OpenSpec，手上就有 `spec.md` | **路线 B · bridge** | 直接跳到「路线 B」 |
+
+> 🚫 **不要两条都走**。`spec.md` 在，它就是唯一需求事实源；再 `draft` 一份契约等于凭空多出
+> 第二个需求源，之后 spec 改了、契约没改，门禁把的到底是哪一份就说不清了。
+
+---
+
+### 路线 A · 没在用 OpenSpec：draft 起步（Step 1–6）
 
 ### Step 1 · 起草（draft）
 
@@ -148,14 +211,19 @@ specgate draft requirement.md
 specgate lint contract.yaml
 ```
 
-- **通过** → 退出码 `0`，终端给出摘要，`review.md` 记录通过情况。
-- **不通过** → 退出码 `2`，`review.md` 分两层列出问题：
+- **通过** → 退出码 `0`，终端给出摘要，`contract.review.md` 记录通过情况。
+- **不通过** → 退出码 `2`，`contract.review.md` 分两层列出问题：
   - **需要修改**：机器已判定不合格（如措辞不可判定、manual 超 20%、不变量恒真）。
   - **需要你决策**：机器不确定，要人签字（如 breaks 待审批、assumed_output 待确认）。
 
-### Step 4 · 按 review.md 修正
+> **review 落在契约旁边、按契约命名**：`path/to/contract.yaml` → `path/to/contract.review.md`。
+> 同一个 change 下有多份 capability 契约时，各自的 review 互不覆盖。
+> 若约束源降级成了 builtin，review 顶部会先挂一条醒目横幅（**本次通过 ≠ 项目约束下通过**），
+> stderr 也会同步告警。
 
-例：`review.md` 指出 `A1` 的 then 不可判定：
+### Step 4 · 按 review 修正
+
+例：`contract.review.md` 指出 `A1` 的 then 不可判定：
 
 ```diff
 - then: 登录界面要友好
@@ -182,6 +250,46 @@ specgate-plan/
 命中即失败（退出码 2）。`context.md` 只在首次生成，已存在则保留——
 实现方填完真实路径后**重跑 `plan`** 才做隔离自检，确保测试方拿不到实现细节。
 
+---
+
+### 路线 B · 已有 OpenSpec：bridge 起步
+
+前提：`spec.md` 是**唯一需求事实源**，这条路**不要再跑 draft**。
+
+```bash
+# 1. 转成契约（确定性解析，不调模型）
+specgate bridge spec.md contract.yaml
+
+#    旧契约里有人工改过的 verify，想保住就加 --keep-verify：
+specgate bridge spec.md contract.yaml --keep-verify
+#    输出会写明「保留人工 verify 修正 N 条」
+
+# 2. 补全桥接填不了的部分（这一步不能省）
+#    · suspect    —— 桥接故意留空，逐条标注「测试方能否写出断言」
+#    · invariants —— 计算/聚合类必填，写「输入变了输出怎么变」
+#    · 措辞       —— OpenSpec 的 THEN 偏口语，按判据一改成可判定表述
+
+# 3. 进门禁（与手写契约走同一套十一项检查）
+specgate lint contract.yaml
+
+# 4-5. 与路线 A 相同：plan 切包 → 实现方 / 测试方并行
+```
+
+**映射速查**：`### Requirement` + `#### Scenario` → 一组 `accept`（`id = 需求名-场景序号`）；
+`**GIVEN**` → `given`；`**WHEN**`（含其后的 `**AND**`）→ `when`；`**THEN**`（含其后的 `**AND**`）→ `then`；
+`**WHY**` 丢弃；`## REMOVED Requirements` → `out_of_scope`。
+
+**`verify` 从哪来**：`spec.md` 里根本没有这个字段，桥接用关键词启发式推断，并给每条打上 `verify_source`：
+
+| `verify_source` | 含义 |
+|---|---|
+| `inferred` | 机器推的。检查⑪ 会报出推断占比，逐条确认后可消除 |
+| `explicit` | 人显式改过的，`--keep-verify` 重跑时会被保留（只保「改过的」，保持幂等） |
+
+> 桥接只做结构搬运：`suspect` / `invariants` 它一律不填。**别把桥出来的契约直接丢进 lint 就交付。**
+
+---
+
 ### Step 6 · 实现方与测试方并行
 
 - 实现方看 `impl-task/contract.yaml` + 自己填的 `context.md` 写代码。
@@ -193,7 +301,7 @@ specgate-plan/
 | 退出码 | 含义 | 下一步 |
 |--------|------|--------|
 | `0` | 通过（含仅提醒项） | 可 `plan` 进实现 |
-| `2` | 不通过 / 隔离泄漏 | 看 `review.md` 改契约 |
+| `2` | 不通过 / 隔离泄漏 | 看 `<契约名>.review.md` 改契约 |
 | `1` | 用法 / IO 错误 | 检查文件路径、YAML 格式 |
 
 ---
@@ -207,6 +315,7 @@ specgate-plan/
 | `contract` | ✔ | 全局唯一短标识 |
 | `intent` | ✔ | 需求方原话，不改写不美化 |
 | `accept[]` | ✔ | 验收条件，≥1 条；每条含 `id / given / when / then / verify` |
+| `accept[].verify_source` | 走 bridge 时自动带 | `inferred`（机器推断）/ `explicit`（人工改过）。走 draft 手写契约可不填 |
 | `accept[].invariants` | 计算类必填 | 输入变了输出怎么变（判据二）；其余可选 |
 | `accept[].example` | 可选 | 写了就要 `positive / negative` 成对；`input`/`output` 必填 |
 | `accept[].assumed_output` | 可选 | AI 推测的期望值登记处 → 归「决策」 |
@@ -263,6 +372,20 @@ specgate-plan/
 | 顶部统计显示「待处理 5」 | 中文直角引号「」 |
 | 接口返回 **500** 时展示错误提示 | 状态码 500 |
 | 按钮处于 **disabled** 状态 | 状态名 disabled |
+| 退出码 **0: Success** / **1: Failure** | 枚举映射（ASCII） |
+| 配置写入 **config/app.yaml** | 带扩展名的文件路径 |
+| 调用 **`` `getUserList()` ``** 后返回结果要友好 | 反引号真标识符（救回「友好」） |
+
+**恒真断言**（与主观词同层，同受锚点门控）——写成测试永远通过，等于没测：
+
+| 不可判定（会被拦） | 可判定（放行） |
+|-------------------|----------------|
+| 删除结果是**数字类型**且**不报错** | 删除一项后剩余数量**等于**原数量减一，而非空列表 |
+| 接口调用**成功即可** | 接口返回 **500** 时错误码等于 `E1001` |
+| 页面渲染**正确无误** | 列表**倒序**排列（有锚点） |
+
+> ⚠️ 恒真模式表里**刻意没有 `/[不非]空/`** —— 「…而非空列表」是可机械判定的布尔断言，
+> 误伤它比漏判更糟。测试里有一条守门用例专门盯着这点。
 
 ### 4.4 蜕变关系正反例（判据二）
 
@@ -295,6 +418,11 @@ specgate-plan/
 
 > 原「漏报 0/16」只用了词表内的词，属自证，已作废。判据二（蜕变关系）本次未改动：样本 23，误报 0、漏报 0。
 
+二轮改动后全量 `node --test`：**37/37 通过**（首轮 26 + 新增 11 条防回归用例）。新增用例覆盖：
+桥接续行保留、四类新锚点与反引号防伪装、恒真断言（含「而非空列表」守门）、
+⑪ 分布只提醒不改退出码、约束逐级查找与降级告警、review 按契约名落盘、
+`--keep-verify` 幂等、⑦ 放开的边界（THEN 自带蜕变关系才放行）。
+
 ### 为什么稳
 
 - **误报比漏报严重**：判定不可判定必须「主观词 + 无锚点」双命中，且带上下文排除（快照 / 慢查询 / 清晰度 / 正常态…），避免把本可验的条件误杀。
@@ -318,8 +446,33 @@ specgate-plan/
 
 ## 7. 常见问题
 
-**Q：lint 报「约束源：builtin」是什么？**
-A：没找到 `constraints.yaml`，用了内置 verify 清单。建议放一份项目级 `constraints.yaml`。
+**Q：lint 报「约束源：builtin」还弹了一屏告警？**
+A：约束源降级了，本次用的是内置 verify 清单，**这次通过 ≠ 项目约束下通过**。告警会区分两种原因：
+`not-found`（从契约目录逐级向上找到仓库根都没找到 `constraints.yaml`）、
+`parse-failed`（找到了但 YAML 解析失败，会把路径打出来）。修好约束源后重跑 `lint`。
+
+**Q：`bridge` 和 `draft` 能一起用吗？**
+A：不能，两者是**互斥前门**。已有 `spec.md` 就只走 `bridge`——`spec.md` 是唯一需求事实源，
+再 `draft` 一份契约等于凭空多出第二个需求源，改一处忘一处就漂移了。
+
+**Q：`--keep-verify` 会不会把机器推断的错值也固化下来？**
+A：不会。它只保留「与本次机器推断结果**不同**」的那些值，也就是只有人真正改过的才算人工修正，
+其余照旧走机器推断；同一份输入重复跑结果一致（幂等）。
+
+**Q：specgate 会替我跑验证工具吗？**
+A：不会。它只**登记并校验 `verify` 的名称**是否在清单里，不执行任何验证工具，
+也不替代实现完成后的 `/opsx:verify`（那是还原度验证，属另一环，且属扩展 profile）。
+
+**Q：那 OpenSpec 自己有没有验证功能？**
+A：有，而且是**两个不同的东西**，别混：
+
+- `openspec validate [name] [--strict] [--json]` —— CLI 命令，验 `spec.md`/变更的**格式与完整性**
+  （Requirement/Scenario 齐不齐、结构合不合规），**不跑代码**。这是官方生命周期里的 verify 环节。
+- `/opsx:verify` —— AI 斜杠命令，扫代码库做**「实现 vs 规格」还原度核查**，给
+  CRITICAL / WARNING / SUGGESTION，**不阻塞 archive**。属**扩展 profile**，
+  默认 profile 只有 `/opsx:explore` 和 `/opsx:propose`；要用它先 `openspec config profile` 再 `openspec update`。
+
+两层都不管「这条验收条件机器验不验得了」——那正是 specgate `lint` 的位置。
 
 **Q：退出码 1 和 2 区别？**
 A：`1` = 用法 / IO 错误（文件不存在、YAML 解析失败，会给出可读错误不抛栈）；`2` = 契约不通过或隔离泄漏。
@@ -335,9 +488,10 @@ A：拿不到。`test-task/` 只有契约 + 验收工具说明 + 提示词，不
 ## 8. 命令速查
 
 ```bash
-specgate draft  <requirement.md>     # 起草：空白契约 + 提示词
-specgate lint   <contract.yaml>      # 门禁：十项检查，退出码 0/2/1，产出 review.md
-specgate plan   <contract.yaml> [outBase]   # 物理隔离两包 + 隔离自检
-node --test                        # 跑 §9 逐条验收 + 两判据实测
+specgate draft  <requirement.md>                      # 前门①：起草空白契约 + 提示词
+specgate bridge <spec.md> [out.yaml] [--keep-verify]  # 前门②：OpenSpec → 契约（与 draft 互斥）
+specgate lint   <contract.yaml>                       # 内核：十一项检查，退出码 0/2/1，产出 <契约名>.review.md
+specgate plan   <contract.yaml> [outBase]             # 物理隔离两包 + 隔离自检
+node --test                        # 逐条验收 + 两判据实测
 node test/measure.mjs              # 打印两判据误报 / 漏报率
 ```
